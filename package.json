@@ -1,0 +1,31 @@
+{
+  "name": "pup-unisan-internationalization",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/build.mjs --demo --serve",
+    "build": "node scripts/build.mjs",
+    "build:demo": "node scripts/build.mjs --demo",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.118.0",
+    "dompurify": "3.4.17",
+    "html2pdf.js": "^0.14.0",
+    "jspdf": "4.2.1",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "6.4.299",
+    "qrcode": "1.5.4",
+    "svg2pdf.js": "2.8.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
+    "@playwright/test": "1.64.1",
+    "esbuild": "0.28.2",
+    "jsqr": "1.4.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

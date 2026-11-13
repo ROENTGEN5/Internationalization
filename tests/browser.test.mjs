@@ -1,0 +1,414 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { chromium } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { PDFDocument, PDFName, decodePDFRawStream, rgb } from 'pdf-lib';
+import jsQR from 'jsqr';
+
+async function assertCertificateFillsPage(bytes) {
+  const doc = await PDFDocument.load(bytes);
+  assert.equal(doc.getPageCount(), 1);
+  const page = doc.getPages()[0];
+  const streams = page.node.Contents();
+  const content = Array.from({ length: streams.size() }, (_, i) =>
+    Buffer.from(decodePDFRawStream(doc.context.lookup(streams.get(i))).decode()).toString()
+  ).join('\n');
+  const matrices = [...content.matchAll(/([\d.]+) 0 0 ([\d.]+) [\d.\-]+ [\d.\-]+ cm/g)];
+  assert.ok(matrices.some(m => Number(m[1]) >= page.getWidth() * 0.98 && Number(m[2]) >= page.getHeight() * 0.98),
+    'Certificate artwork should occupy at least 98% of the A4 landscape page in both dimensions');
+  const images = doc.context.enumerateIndirectObjects().map(([, object]) => object)
+    .filter(object => object.dict?.get(PDFName.of('Subtype'))?.toString() === '/Image');
+  assert.ok(images.some(image => image.dict.get(PDFName.of('Width')).asNumber() >= 3500
+    && image.dict.get(PDFName.of('Height')).asNumber() >= 2470),
+  'Certificate artwork should be embedded at approximately 300 DPI for A4 printing');
+}
+
+test('build rejects missing configuration and secret keys', () => {
+  for (const config of [{ SUPABASE_URL: '', SUPABASE_PUBLISHABLE_KEY: '' }, { SUPABASE_URL: 'https://test.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_secret_forbidden' }]) {
+    const result = spawnSync(process.execPath, ['scripts/build.mjs'], { env: { ...process.env, ...config }, encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+  }
+});
+
+test('production connects without exposing admin data and fails closed on database errors', async () => {
+  const server = spawn(process.execPath, ['scripts/build.mjs', '--serve'], { env: { ...process.env, PORT: '3001', SUPABASE_URL: 'https://test.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let browser;
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Production preview timed out')), 30000);
+      server.stdout.on('data', data => { if (String(data).includes('Open http')) { clearTimeout(timeout); resolve(); } });
+      server.on('exit', code => { clearTimeout(timeout); reject(new Error('Preview exited: ' + code)); });
+    });
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    const requests = [];
+    await page.route('https://test.supabase.co/**', route => {
+      requests.push(route.request().url());
+      const url = route.request().url();
+      const data = url.includes('form_settings') ? { id: 1, form_title: 'Live Internationalization Form', form_description: 'Test configuration' }
+        : url.includes('certificate_settings') ? ['participant', 'presenter'].map(event_role => ({ id: 1, event_role, title: 'Certificate', template_type: 'default' })) : [];
+      return route.fulfill({ json: data });
+    });
+    await page.goto('http://127.0.0.1:3001');
+    await page.waitForFunction(() => !document.getElementById('btn-submit-form').disabled);
+    assert.equal(await page.locator('#public-form-title').textContent(), 'Live Internationalization Form');
+    assert.equal(await page.locator('#link-footer-config').isVisible(), false);
+    assert.equal(requests.some(url => url.includes('survey_responses')), false);
+    await page.locator('#link-footer-admin').click();
+    assert.equal(await page.locator('#admin-dashboard-box').isVisible(), false);
+    assert.equal(await page.locator('#admin-auth-box').isVisible(), true);
+    await page.unrouteAll();
+    await page.route('https://test.supabase.co/**', route => route.fulfill({ status: 400, json: { message: 'Database unavailable' } }));
+    await page.reload();
+    await page.waitForFunction(() => document.getElementById('participant-alert-box').textContent.includes('Unable to load'));
+    assert.equal(await page.locator('#btn-submit-form').isDisabled(), true);
+    assert.equal(await page.locator('#participant-dynamic-questions .gf-question-card').count(), 0);
+  } finally { await browser?.close(); server.kill(); }
+});
+
+test('mobile form, logo, validation, duplicate prevention, admin builder and PDF download', async () => {
+  const server = spawn(process.execPath, ['scripts/build.mjs', '--demo', '--serve'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let browser;
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Preview server timed out')), 30000);
+      server.stdout.on('data', data => { if (String(data).includes('Open http')) { clearTimeout(timeout); resolve(); } });
+      server.on('exit', code => { clearTimeout(timeout); reject(new Error('Preview exited: ' + code)); });
+    });
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
+    // Reproduce the older browsers where PDF.js's modern build failed.
+    await page.addInitScript(() => {
+      Map.prototype.getOrInsertComputed = undefined;
+      Promise.try = undefined;
+    });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto('http://127.0.0.1:3000');
+    await page.locator('#deployment-notice').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#view-participant .program-logos img').evaluateAll(images => images.length === 3 && images.every(img => img.complete && img.naturalWidth > 0)), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.locator('#btn-submit-form').click();
+    assert.equal(await page.locator('#card-p-name').evaluate(el => el.classList.contains('has-error')), true);
+    await page.locator('#input-p-name').fill('Juan Dela Cruz');
+    await page.locator('#input-p-email').fill('juan@example.com');
+    await page.locator('#input-p-role').selectOption('participant');
+    await page.locator('.gf-rating-scale').nth(0).locator('button').nth(4).click();
+    await page.locator('.gf-options-list').first().locator('.gf-option-row').first().click();
+    await page.locator('.gf-rating-scale').nth(1).locator('button').nth(4).click();
+    await page.locator('#btn-submit-form').click();
+    await page.locator('#view-certificate.active').waitFor();
+    assert.equal(await page.locator('#cert-recipient-name').textContent(), 'Juan Dela Cruz');
+    assert.equal(await page.locator('#cert-title-display').textContent(), 'Certificate of Participation');
+    assert.equal(await page.locator('#cert-issuer-display').textContent(), 'PUP Unisan Internationalization');
+    assert.match(await page.locator('#cert-id-display').textContent(), /^INTL-/);
+    assert.equal(await page.locator('#certificate-print-area .program-logos img').evaluateAll(images => images.length === 3 && images.every(img => img.complete && img.naturalWidth > 0)), true);
+    const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
+    await page.locator('#btn-download-pdf').click();
+    const download = await downloadPromise;
+    assert.equal(await download.failure(), null);
+    assert.match(download.suggestedFilename(), /^Participant_Certificate_/);
+    const pdf = await readFile(await download.path());
+    assert.equal(pdf.subarray(0, 4).toString(), '%PDF');
+    assert.equal((await PDFDocument.load(pdf)).getPageCount(), 1);
+    await assertCertificateFillsPage(pdf);
+    await page.evaluate(() => scrollTo(0, 0));
+    await page.screenshot({ path: 'test-results/mobile-certificate.png', fullPage: true });
+    await page.locator('#btn-submit-another').click();
+    await page.locator('#input-p-name').fill('Another Name');
+    await page.locator('#input-p-email').fill('juan@example.com');
+    await page.locator('#input-p-role').selectOption('participant');
+    await page.locator('.gf-rating-scale').nth(0).locator('button').nth(4).click();
+    await page.locator('.gf-options-list').first().locator('.gf-option-row').first().click();
+    await page.locator('.gf-rating-scale').nth(1).locator('button').nth(4).click();
+    await page.locator('#btn-submit-form').click();
+    await page.waitForFunction(() => document.getElementById('participant-alert-box').textContent.includes('already responded'));
+    assert.equal(await page.locator('#btn-retrieve-cert').count(), 0);
+    await page.locator('#input-p-email').fill('presenter@example.com');
+    await page.locator('#input-p-role').selectOption('presenter');
+    await page.locator('#btn-submit-form').click();
+    await page.locator('#view-certificate.active').waitFor();
+    assert.equal(await page.locator('#cert-title-display').textContent(), 'Certificate of Recognition');
+    assert.equal(await page.locator('#cert-role-label').textContent(), 'Presenter');
+    const presenterDownload = page.waitForEvent('download', { timeout: 60000 });
+    await page.locator('#btn-download-pdf').click();
+    const presenterPdf = await presenterDownload;
+    assert.match(presenterPdf.suggestedFilename(), /^Presenter_Certificate_/);
+    await assertCertificateFillsPage(await readFile(await presenterPdf.path()));
+    await page.locator('#btn-submit-another').click();
+    await page.evaluate(() => scrollTo(0, 0));
+    await page.screenshot({ path: 'test-results/mobile-form.png', fullPage: true });
+    await page.locator('#link-footer-admin').click();
+    await page.locator('#admin-dashboard-box').waitFor({ state: 'visible' });
+    await page.locator('#builder-form-title').fill('Internationalization Event Evaluation');
+    await page.locator('#btn-builder-save-all').click();
+    await page.waitForFunction(() => document.getElementById('nav-form-title').textContent === 'Internationalization Event Evaluation');
+    await page.locator('[data-tab="tab-certificate"]').click();
+    await page.locator('#certificate-role').selectOption('presenter');
+    await page.locator('#setting-cert-title').fill('Presenter Recognition');
+    await page.locator('#form-cert-settings button[type="submit"]').click();
+    await page.locator('#certificate-role').selectOption('participant');
+    assert.equal(await page.locator('#setting-cert-title').inputValue(), 'Certificate of Participation');
+    const participantPicker = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Upload participant template' }).click();
+    const template = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1160; canvas.height = 820;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff2ce'; ctx.fillRect(0, 0, 1160, 820);
+      ctx.strokeStyle = '#7c2020'; ctx.lineWidth = 20; ctx.strokeRect(10, 10, 1140, 800);
+      ctx.fillStyle = '#7c2020'; ctx.font = 'bold 54px Georgia'; ctx.textAlign = 'center';
+      ctx.fillText('CERTIFICATE OF PARTICIPATION', 580, 180);
+      return canvas.toDataURL('image/png').split(',')[1];
+    });
+    await (await participantPicker).setFiles({
+      name: 'certificate.png', mimeType: 'image/png', buffer: Buffer.from(template, 'base64')
+    });
+    await page.waitForFunction(() => document.getElementById('cert-file-name-text').textContent === 'certificate.png');
+    await page.locator('#btn-save-custom-template').click();
+    assert.match(await page.locator('#participant-template-status').textContent(), /certificate\.png/);
+    assert.equal(await page.locator('#presenter-template-status').textContent(), 'Built-in certificate');
+    await page.locator('#btn-toggle-preview').click();
+    await page.locator('#input-p-name').fill('Maria Dela Cruz');
+    await page.locator('#input-p-email').fill('maria@example.com');
+    await page.locator('#input-p-role').selectOption('participant');
+    await page.locator('.gf-rating-scale').nth(0).locator('button').last().click();
+    await page.locator('.gf-options-list').first().locator('.gf-option-row').first().click();
+    await page.locator('.gf-rating-scale').nth(1).locator('button').last().click();
+    await page.locator('#btn-submit-form').click();
+    await page.locator('#view-certificate.active').waitFor();
+    const imageDownloadPromise = page.waitForEvent('download', { timeout: 60000 });
+    await page.locator('#btn-download-pdf').click();
+    const imageDownload = await imageDownloadPromise;
+    assert.equal(await imageDownload.failure(), null);
+    await imageDownload.saveAs('test-results/custom-image-certificate.pdf');
+    await assertCertificateFillsPage(await readFile(await imageDownload.path()));
+    await page.locator('#link-footer-admin').click();
+    await page.locator('[data-tab="tab-builder"]').click();
+    assert.equal(await page.locator('#allow-duplicate-responses').isChecked(), false);
+    await page.locator('#allow-duplicate-responses').check();
+    await page.locator('#btn-save-response-settings').click();
+    await page.waitForFunction(() => document.getElementById('response-settings-status').textContent.includes('repeat submissions are allowed'));
+    await page.locator('#btn-toggle-preview').click();
+    async function submitRepeat() {
+      await page.locator('#input-p-name').fill('Maria Dela Cruz');
+      await page.locator('#input-p-email').fill('maria@example.com');
+      await page.locator('#input-p-role').selectOption('participant');
+      for (const scale of await page.locator('.gf-rating-scale').all()) await scale.locator('button').last().click();
+      await page.locator('.gf-options-list').first().locator('.gf-option-row').first().click();
+      await page.locator('#btn-submit-form').click();
+    }
+    await submitRepeat();
+    await page.locator('#view-certificate.active').waitFor();
+    await page.locator('#link-footer-admin').click();
+    assert.equal(await page.locator('#allow-duplicate-responses').isChecked(), true);
+    await page.locator('#allow-duplicate-responses').uncheck();
+    await page.locator('#btn-save-response-settings').click();
+    await page.waitForFunction(() => document.getElementById('response-settings-status').textContent.includes('each email can submit once'));
+    await page.locator('#btn-toggle-preview').click();
+    await submitRepeat();
+    await page.waitForFunction(() => document.getElementById('participant-alert-box').textContent.includes('already responded'));
+    assert.equal(await page.locator('#view-certificate.active').count(), 0);
+    await page.locator('#link-footer-admin').click();
+    await page.locator('[data-tab="tab-certificate"]').click();
+    const invalidSvgDialog = page.waitForEvent('dialog');
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#input-cert-template-file').setInputFiles({
+      name: 'unsafe.svg', mimeType: 'image/svg+xml',
+      buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')
+    });
+    assert.match((await invalidSvgDialog).message(), /static SVG/);
+    assert.equal(await page.locator('#cert-file-name-text').textContent(), 'certificate.png');
+    const externalSvgDialog = page.waitForEvent('dialog');
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#input-cert-template-file').setInputFiles({
+      name: 'external.svg', mimeType: 'image/svg+xml',
+      buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 842 595"><image href="https://example.com/photo.png" width="842" height="595"/></svg>')
+    });
+    assert.match((await externalSvgDialog).message(), /Embed images/);
+    await page.locator('#input-cert-template-file').setInputFiles({
+      name: 'vector-certificate.svg', mimeType: 'image/svg+xml',
+      buffer: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 842 595">
+        <style>.title { fill: #702020; font-family: Times; font-size: 32px; }</style>
+        <rect width="842" height="595" fill="#fff9e6"/>
+        <rect x="8" y="8" width="826" height="579" fill="none" stroke="#702020" stroke-width="12"/>
+        <path d="M 24 24 L 818 24 L 818 571 L 24 571 Z" fill="none" stroke="#bd932c" stroke-width="3"/>
+        <text x="421" y="145" text-anchor="middle" class="title">CERTIFICATE OF PARTICIPATION</text>
+        <!--${'x'.repeat(10 * 1024 * 1024)}-->
+      </svg>`)
+    });
+    await page.waitForFunction(() => document.getElementById('cert-file-name-text').textContent === 'vector-certificate.svg.pdf');
+    await page.waitForFunction(() => document.getElementById('admin-custom-cert-preview').dataset.previewState === 'ready');
+    assert.match(await page.locator('#admin-custom-cert-preview').evaluate(element => element.style.backgroundImage), /data:image\/png/);
+    await page.locator('#btn-save-custom-template').click();
+    await page.locator('#btn-toggle-preview').click();
+    await page.locator('#input-p-name').fill('SVG Test Participant');
+    await page.locator('#input-p-email').fill('svg@example.com');
+    await page.locator('#input-p-role').selectOption('participant');
+    for (const scale of await page.locator('.gf-rating-scale').all()) await scale.locator('button').last().click();
+    await page.locator('.gf-options-list').first().locator('.gf-option-row').first().click();
+    await page.locator('#btn-submit-form').click();
+    await page.locator('#view-certificate.active').waitFor();
+    await page.waitForFunction(() => document.getElementById('certificate-custom-area').dataset.previewState === 'ready');
+    const vectorDownloadPromise = page.waitForEvent('download', { timeout: 60000 });
+    await page.locator('#btn-download-pdf').click();
+    const vectorDownload = await vectorDownloadPromise;
+    assert.equal(await vectorDownload.failure(), null);
+    await vectorDownload.saveAs('test-results/svg-certificate.pdf');
+    const vectorDoc = await PDFDocument.load(await readFile(await vectorDownload.path()));
+    assert.equal(vectorDoc.getPageCount(), 1);
+    const vectorPage = vectorDoc.getPages()[0];
+    assert.ok(Math.abs(vectorPage.getWidth() - 841.89) < 1 && Math.abs(vectorPage.getHeight() - 595.28) < 1);
+    assert.equal(vectorDoc.context.enumerateIndirectObjects().some(([, object]) =>
+      object.dict?.get(PDFName.of('Subtype'))?.toString() === '/Image'), false,
+    'A vector-only SVG template must remain vector artwork in the downloaded PDF');
+    await page.locator('#link-footer-admin').click();
+    await page.locator('#input-cert-template-file').setInputFiles({
+      name: 'broken.pdf', mimeType: 'application/pdf', buffer: Buffer.from('not a PDF')
+    });
+    await page.waitForFunction(() => document.getElementById('admin-custom-cert-preview').dataset.previewState === 'error');
+    assert.match(await page.locator('#admin-custom-cert-preview').getAttribute('data-preview-message'), /Could not preview/);
+    const previewDoc = await PDFDocument.create();
+    const previewPage = previewDoc.addPage([842, 595]);
+    previewPage.drawRectangle({ x: 0, y: 0, width: 842, height: 595, color: rgb(1, 0.98, 0.9) });
+    previewPage.drawText('PDF TEMPLATE PREVIEW', { x: 210, y: 480, size: 28, color: rgb(0.44, 0.12, 0.12) });
+    await page.locator('#input-cert-template-file').setInputFiles({
+      name: 'preview.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await previewDoc.save())
+    });
+    await page.waitForFunction(() => document.getElementById('admin-custom-cert-preview').dataset.previewState === 'ready');
+    const pixel = await page.locator('#admin-custom-cert-preview').evaluate(async element => {
+      const image = new Image();
+      image.src = element.style.backgroundImage.slice(5, -2);
+      await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = 1; canvas.height = 1;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data);
+    });
+    assert.ok(pixel[0] > 245 && pixel[1] > 240 && pixel[2] > 215, 'Preview must contain the uploaded PDF artwork');
+    await page.locator('#slider-name-y').fill('60');
+    assert.equal(await page.locator('#admin-custom-cert-preview').getAttribute('data-preview-state'), 'ready');
+    await page.locator('#admin-custom-cert-preview').screenshot({ path: 'test-results/admin-pdf-preview.png' });
+
+    const presenterTemplate = await PDFDocument.create();
+    presenterTemplate.addPage([720, 480]).drawText('PRESENTER TEMPLATE', { x: 180, y: 380 });
+    const presenterPicker = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Upload presenter template' }).click();
+    await (await presenterPicker).setFiles({
+      name: 'presenter.PDF', mimeType: 'application/pdf', buffer: Buffer.from(await presenterTemplate.save())
+    });
+    await page.waitForFunction(() => document.getElementById('admin-custom-cert-preview').dataset.previewState === 'ready');
+    await page.getByRole('button', { name: 'Save presenter template' }).click();
+    assert.match(await page.locator('#presenter-template-status').textContent(), /presenter\.PDF/);
+    assert.match(await page.locator('#participant-template-status').textContent(), /vector-certificate\.svg\.pdf/);
+    await page.locator('#btn-toggle-preview').click();
+    await page.locator('#input-p-name').fill('Custom Presenter');
+    await page.locator('#input-p-email').fill('custom-presenter@example.com');
+    await page.locator('#input-p-role').selectOption('presenter');
+    for (const scale of await page.locator('.gf-rating-scale').all()) await scale.locator('button').last().click();
+    await page.locator('.gf-options-list').first().locator('.gf-option-row').first().click();
+    await page.locator('#btn-submit-form').click();
+    await page.locator('#view-certificate.active').waitFor();
+    const customPresenterDownload = page.waitForEvent('download');
+    await page.locator('#btn-download-pdf').click();
+    const presenterFile = await customPresenterDownload;
+    assert.match(presenterFile.suggestedFilename(), /^Presenter_Certificate_/);
+    const customPresenterPdf = await PDFDocument.load(await readFile(await presenterFile.path()));
+    assert.deepEqual(customPresenterPdf.getPage(0).getSize(), { width: 720, height: 480 });
+    assert.deepEqual(errors, []);
+  } finally { await browser?.close(); server.kill(); }
+});
+
+
+test('admin creates and switches independent program forms with separate certificate and share links', async () => {
+  const server = spawn(process.execPath, ['scripts/build.mjs', '--demo', '--serve'], { env: { ...process.env, PORT: '3002' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let browser;
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Preview timed out')), 30000);
+      server.stdout.on('data', data => { if (String(data).includes('Open http')) { clearTimeout(timeout); resolve(); } });
+      server.on('exit', code => { clearTimeout(timeout); reject(new Error('Preview exited: ' + code)); });
+    });
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    page.on('dialog', dialog => dialog.accept());
+    await page.goto('http://127.0.0.1:3002/?admin=1');
+    await page.waitForFunction(() => document.getElementById('program-select').options.length === 1);
+    assert.equal(await page.locator('#responses-counter').textContent(), '1');
+    await page.locator('#new-program-title').fill('October 29 Program');
+    await page.locator('#btn-create-program').click();
+    await page.waitForURL('**form=2**');
+    assert.equal(await page.locator('#builder-form-title').inputValue(), 'October 29 Program');
+    assert.equal(await page.locator('#responses-counter').textContent(), '0');
+    assert.equal(await page.locator('#builder-questions-list .gf-card-builder').count(), 2);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.screenshot({ path: 'test-results/program-manager-mobile.png', fullPage: true });
+    await page.locator('#btn-open-send-modal').click();
+    assert.equal(await page.locator('#share-link-input').inputValue(), 'http://127.0.0.1:3002/?form=2');
+    async function decodeShareQr() {
+      await page.locator('#share-qr-image').waitFor({ state: 'visible' });
+      const pixels = await page.locator('#share-qr-image').evaluate(async image => {
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0, 480, 480);
+        return Array.from(ctx.getImageData(0, 0, 480, 480).data);
+      });
+      return jsQR(new Uint8ClampedArray(pixels), 480, 480)?.data;
+    }
+    assert.equal(await decodeShareQr(), 'http://127.0.0.1:3002/?form=2');
+    assert.match(await page.locator('#share-qr-status').textContent(), /Local preview link/);
+    assert.equal(await page.locator('#share-qr-image').evaluate(image => image.naturalWidth), 1200);
+    const qrDownloaded = page.waitForEvent('download');
+    await page.locator('#btn-download-qr').click();
+    const qrDownload = await qrDownloaded;
+    assert.equal(qrDownload.suggestedFilename(), 'Internationalization_Form_2_QR.png');
+    const qrBytes = await readFile(await qrDownload.path());
+    assert.equal(qrBytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    const qrSource = await page.locator('#share-qr-image').getAttribute('src');
+    assert.deepEqual(qrBytes, Buffer.from(qrSource.split(',')[1], 'base64'));
+    await page.screenshot({ path: 'test-results/share-qr-mobile.png', fullPage: true });
+    await page.locator('#btn-close-send-modal').click();
+    await page.locator('[data-tab="tab-certificate"]').click();
+    await page.locator('#setting-cert-title').fill('October 29 Certificate');
+    await page.locator('#form-cert-settings button[type="submit"]').click();
+    await page.locator('[data-tab="tab-builder"]').click();
+    await page.locator('#program-select').selectOption('1');
+    assert.equal(await page.locator('#builder-form-title').inputValue(), 'Internationalization Feedback');
+    assert.equal(await page.locator('#responses-counter').textContent(), '1');
+    assert.equal(await page.locator('#builder-questions-list .gf-card-builder').count(), 4);
+    assert.equal(await page.locator('#setting-cert-title').inputValue(), 'Certificate of Participation');
+    await page.locator('#btn-open-send-modal').click();
+    assert.equal(await decodeShareQr(), 'http://127.0.0.1:3002/?form=1');
+    assert.equal(await page.locator('#btn-download-qr').getAttribute('download'), 'Internationalization_Form_1_QR.png');
+    await page.locator('#btn-close-send-modal').click();
+    await page.locator('#program-select').selectOption('2');
+    assert.equal(await page.locator('#setting-cert-title').inputValue(), 'October 29 Certificate');
+    assert.equal(await page.locator('#responses-counter').textContent(), '0');
+    await page.locator('#btn-toggle-preview').click();
+    await page.locator('#input-p-name').fill('Alex Rivera');
+    await page.locator('#input-p-email').fill('alex.rivera@example.com');
+    await page.locator('#input-p-role').selectOption('participant');
+    await page.locator('.gf-rating-scale button').last().click();
+    await page.locator('#btn-submit-form').click();
+    await page.locator('#view-certificate.active').waitFor();
+    assert.equal(await page.locator('#cert-recipient-name').textContent(), 'Alex Rivera');
+    assert.equal(await page.locator('#cert-title-display').textContent(), 'October 29 Certificate');
+    await page.locator('#link-footer-admin').click();
+    await page.locator('[data-tab="tab-responses"]').click();
+    const exported = page.waitForEvent('download');
+    await page.locator('#btn-export-csv').click();
+    const download = await exported;
+    const csv = await readFile(await download.path(), 'utf8');
+    assert.match(csv, /Alex Rivera/);
+    assert.match(csv, /"Role"/);
+    assert.match(csv, /"Participant"/);
+    assert.doesNotMatch(csv, /international partners/);
+    assert.match(download.suggestedFilename(), /Form_2/);
+    assert.deepEqual(errors, []);
+    await page.screenshot({ path: 'test-results/multiple-programs-mobile.png', fullPage: true });
+  } finally { await browser?.close(); server.kill(); }
+});
