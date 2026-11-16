@@ -24,14 +24,11 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   let isDemoMode = false;
   let isAdminMode = false;
 
-  const certificateRoles = ['participant', 'presenter'];
-  const roleLabels = { participant: 'Participant', presenter: 'Presenter' };
-
   let demoStore = {
     formSettings: {
       id: 1,
       form_title: "Internationalization Feedback",
-      form_description: "Share your feedback about the Internationalization program. After submitting, you can download a certificate for your role.",
+      form_description: "Share your feedback about the Internationalization program.",
       theme_color: "#7c3aed",
       allow_duplicate_responses: false
     },
@@ -84,31 +81,11 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
         created_at: new Date(Date.now() - 3600000).toISOString()
       }
     ],
-    certificateSettings: {
-      id: 1,
-      title: "Certificate of Participation",
-      issuer: "PUP Unisan Internationalization",
-      body: "Awarded to {name} for participating in the Internationalization program.",
-      signatory_name: "Authorized Signatory",
-      signatory_title: "Internationalization Program",
-      template_type: "default", // 'default' or 'custom_pdf' or 'custom_image'
-      template_data: "",
-      template_filename: "",
-      name_y_percent: 52,
-      name_font_size: 32,
-      name_color: "#1e3a8a",
-      name_font_family: "serif"
-    }
-  };
-
-  demoStore.certificates = {
-    participant: { ...demoStore.certificateSettings, event_role: 'participant' },
-    presenter: {
-      ...demoStore.certificateSettings,
-      event_role: 'presenter',
-      title: 'Certificate of Recognition',
-      body: 'Awarded to {name} in recognition of their contribution as a presenter at the Internationalization program.'
-    }
+    roles: [
+      { role_id: 'participant', label: 'Participant', is_active: true },
+      { role_id: 'presenter', label: 'Presenter', is_active: true }
+    ],
+    certificates: Object.create(null)
   };
 
   const requestedForm = new URLSearchParams(window.location.search).get('form');
@@ -175,7 +152,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
         id = Math.max(...demoForms.keys()) + 1;
         const store = structuredClone(demoDefaults);
         store.formSettings = { ...store.formSettings, id, form_title: title, form_description: 'Please share your feedback about this program.' };
-        for (const certificate of Object.values(store.certificates)) certificate.id = id;
+        store.roles = [];
         store.responses = [];
         store.questions = [
           { id: crypto.randomUUID(), question_text: 'How would you rate the overall program?', question_type: 'rating', options: [], is_required: true, sort_order: 1 },
@@ -198,15 +175,16 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   // State
   let formSettings = { ...demoStore.formSettings };
   let currentQuestions = [];
-  let adminCertificateRole = 'participant';
+  let formRoles = [];
+  let adminCertificateRole = '';
   let savedCertificates = demoStore.certificates;
-  let certSettings = { ...savedCertificates.participant };
+  let certSettings = {};
   let issuedCertificate = null;
   const certificateRoleSelect = document.getElementById('certificate-role');
   const inputPRole = document.getElementById('input-p-role');
   const cardPRole = document.getElementById('card-p-role');
   let participantAnswers = {};
-  let activeParticipant = { name: "", role: "" };
+  let activeParticipant = { name: "", roleLabel: "" };
   let cachedResponses = [];
   let currentUser = null;
   let dataReady = false;
@@ -239,23 +217,9 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   const btnClearForm = document.getElementById('btn-clear-form');
 
   // Certificate Display Elements
-  const certificatePrintArea = document.getElementById('certificate-print-area');
-  // Keep the certificate's landscape layout readable on narrow screens.
-  new ResizeObserver(([entry]) => {
-    certificatePrintArea.style.zoom = Math.min(1, entry.contentRect.width / 580);
-  }).observe(certificatePrintArea.parentElement);
   const certificateCustomArea = document.getElementById('certificate-custom-area');
   const customCertNameDisplay = document.getElementById('custom-cert-name-display');
 
-  const certTitleDisplay = document.getElementById('cert-title-display');
-  const certIssuerDisplay = document.getElementById('cert-issuer-display');
-  const certRecipientName = document.getElementById('cert-recipient-name');
-  const certBodyDisplay = document.getElementById('cert-body-display');
-  const certSigScript = document.getElementById('cert-sig-script');
-  const certSigNameDisplay = document.getElementById('cert-sig-name-display');
-  const certSigTitleDisplay = document.getElementById('cert-sig-title-display');
-  const certDateDisplay = document.getElementById('cert-date-display');
-  const certIdDisplay = document.getElementById('cert-id-display');
   const btnDownloadPdf = document.getElementById('btn-download-pdf');
   const pdfBtnLabel = document.getElementById('pdf-btn-label');
   const btnPrintCert = document.getElementById('btn-print-cert');
@@ -288,10 +252,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   const btnDownloadSampleJson = document.getElementById('btn-download-sample-json');
 
   // Certificate Customization Elements (Tab C)
-  const btnModeDefault = document.getElementById('btn-mode-default');
-  const btnModeCustom = document.getElementById('btn-mode-custom');
   const sectionCustomTemplate = document.getElementById('section-custom-template');
-  const formCertSettings = document.getElementById('form-cert-settings');
 
   const inputCertTemplateFile = document.getElementById('input-cert-template-file');
   const certUploadDropzone = document.getElementById('cert-upload-dropzone');
@@ -308,12 +269,6 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   const adminCustomCertPreview = document.getElementById('admin-custom-cert-preview');
   const adminNameOverlayPreview = document.getElementById('admin-name-overlay-preview');
   const btnSaveCustomTemplate = document.getElementById('btn-save-custom-template');
-
-  const settingCertTitle = document.getElementById('setting-cert-title');
-  const settingCertIssuer = document.getElementById('setting-cert-issuer');
-  const settingCertBody = document.getElementById('setting-cert-body');
-  const settingCertSigName = document.getElementById('setting-cert-signame');
-  const settingCertSigTitle = document.getElementById('setting-cert-sigtitle');
 
   // Responses Elements
   const responsesCounter = document.getElementById('responses-counter');
@@ -409,9 +364,10 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
       formSettings = { ...demoStore.formSettings };
       currentQuestions = [...demoStore.questions].sort((a, b) => a.sort_order - b.sort_order);
       savedCertificates = demoStore.certificates;
-      loadCertificateEditor();
+      formRoles = demoStore.roles;
+      applyRoles(true);
       cachedResponses = [...demoStore.responses];
-      applyFormAndCertSettings();
+      applyFormSettings();
       renderParticipantQuestions();
       renderBuilderQuestions();
       renderAdminResponses();
@@ -422,22 +378,23 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
 
     try {
       if (!supabaseClient) throw new Error('The database connection is not configured.');
-      const [formRes, questionsRes, certRes] = await Promise.all([
+      const [formRes, questionsRes, certRes, rolesRes] = await Promise.all([
         supabaseClient.from('form_settings').select('*').eq('id', activeFormId).maybeSingle(),
         supabaseClient.from('survey_questions').select('*').eq('form_id', activeFormId).order('sort_order', { ascending: true }),
-        supabaseClient.from('certificate_settings').select('*').eq('id', activeFormId)
+        supabaseClient.from('certificate_settings').select('*').eq('id', activeFormId),
+        supabaseClient.from('form_roles').select('role_id,label,is_active').eq('form_id', activeFormId).order('created_at').order('role_id')
       ]);
-      for (const result of [formRes, questionsRes, certRes]) if (result.error) throw result.error;
-      if (!formRes.data || !certRes.data) throw new Error('Database setup is incomplete.');
+      for (const result of [formRes, questionsRes, certRes, rolesRes]) if (result.error) throw result.error;
+      if (!formRes.data) throw new Error('Database setup is incomplete.');
 
-      if (formRes.data) formSettings = formRes.data;
+      formSettings = formRes.data;
       currentQuestions = questionsRes.data || [];
       savedCertificates = Object.fromEntries(certRes.data.map(certificate => [certificate.event_role, certificate]));
-      if (!certificateRoles.every(role => savedCertificates[role])) throw new Error('Role-specific certificate settings are missing. Run the Internationalization schema.');
-      loadCertificateEditor();
+      formRoles = rolesRes.data;
+      applyRoles(true);
       cachedResponses = [];
 
-      applyFormAndCertSettings();
+      applyFormSettings();
       renderParticipantQuestions();
       renderBuilderQuestions();
       renderAdminResponses();
@@ -452,35 +409,13 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
     }
   }
 
-  function applyFormAndCertSettings() {
+  function applyFormSettings() {
     navFormTitle.textContent = formSettings.form_title || 'Internationalization Feedback';
     publicFormTitle.textContent = formSettings.form_title || 'Internationalization Feedback';
     publicFormDesc.textContent = formSettings.form_description || '';
     builderFormTitle.value = formSettings.form_title || '';
     builderFormDesc.value = formSettings.form_description || '';
     document.getElementById('allow-duplicate-responses').checked = formSettings.allow_duplicate_responses === true;
-
-    applyCertificateEditorSettings();
-  }
-
-  function applyCertificateEditorSettings() {
-    for (const role of certificateRoles) {
-      const saved = savedCertificates[role];
-      document.getElementById(role + '-template-status').textContent =
-        saved?.template_data && saved.template_type !== 'default'
-          ? 'Custom template: ' + saved.template_filename
-          : 'Built-in certificate';
-    }
-
-    // Populate default certificate settings form
-    settingCertTitle.value = certSettings.title || '';
-    settingCertIssuer.value = certSettings.issuer || '';
-    settingCertBody.value = certSettings.body || '';
-    settingCertSigName.value = certSettings.signatory_name || '';
-    settingCertSigTitle.value = certSettings.signatory_title || '';
-
-    // Certificate Mode UI update
-    updateCertificateModeUI();
   }
 
   // ---------------------------------------------------------------------------
@@ -714,7 +649,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
 
     const fullName = inputPName.value.trim();
     const email = inputPEmail.value.trim().toLowerCase();
-    const role = inputPRole.value;
+    const role = inputPRole.value || null;
 
     let hasError = false;
     let firstErrorCard = null;
@@ -738,7 +673,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
       cardPEmail.classList.remove('has-error');
     }
 
-    const invalidRole = !certificateRoles.includes(role);
+    const invalidRole = !cardPRole.hidden && !formRoles.some(item => item.is_active && item.role_id === role);
     cardPRole.classList.toggle('has-error', invalidRole);
     inputPRole.setAttribute('aria-invalid', String(invalidRole));
     inputPRole.setAttribute('aria-describedby', invalidRole ? 'role-help role-error' : 'role-help');
@@ -786,7 +721,8 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
       answers: answersMap
     };
 
-    const certificate = { ...savedCertificates[role] };
+    const certificate = role ? savedCertificates[role] : null;
+    const selectedRoleLabel = roleLabel(role);
     submitting = true;
     setButtonLoading(btnSubmitForm, true, 'Submitting response...');
 
@@ -809,13 +745,13 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
         if (error) throw error;
       }
 
-      setButtonLoading(btnSubmitForm, false, 'Submit & Generate Certificate');
+      setButtonLoading(btnSubmitForm, false, 'Submit');
       submitting = false;
-      showCertificateView(fullName, email, role, certificate);
+      showSubmissionResult(fullName, selectedRoleLabel, certificate);
 
     } catch (err) {
       console.error('Submission error:', err);
-      setButtonLoading(btnSubmitForm, false, 'Submit & Generate Certificate');
+      setButtonLoading(btnSubmitForm, false, 'Submit');
       submitting = false;
 
       if (err.code === '23505' || (err.message && err.message.toLowerCase().includes('duplicate key'))) {
@@ -825,7 +761,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
               You have already responded to this form
             </h3>
             <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 12px;">
-              A submission has already been registered for this email. Please contact the program organizers if you need your certificate reissued.
+              A submission has already been registered for this email. Contact the program organizers if you need assistance.
             </p>
           </div>
         `;
@@ -860,44 +796,25 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   // ---------------------------------------------------------------------------
   // 7. View 2: Certificate Display & Dynamic PDF Generation
   // ---------------------------------------------------------------------------
-  function showCertificateView(fullName, email, role, certSettings) {
-    activeParticipant = { name: fullName, role };
-    issuedCertificate = certSettings;
-    certRecipientName.textContent = fullName;
-    document.getElementById('certificate-confirmation').textContent = `Your ${role} certificate is ready to download.`;
-    document.getElementById('cert-role-label').textContent = roleLabels[role];
-    certificatePrintArea.dataset.role = role;
-    certTitleDisplay.textContent = certSettings.title;
-    certIssuerDisplay.textContent = certSettings.issuer;
-    certBodyDisplay.textContent = certSettings.body.replace(/\{name\}/gi, () => fullName);
-    certSigScript.textContent = certSettings.signatory_name;
-    certSigNameDisplay.textContent = certSettings.signatory_name;
-    certSigTitleDisplay.textContent = certSettings.signatory_title;
+  function showSubmissionResult(fullName, selectedRoleLabel, certificate) {
+    activeParticipant = { name: fullName, roleLabel: selectedRoleLabel };
+    issuedCertificate = certificate;
+    const hasCertificate = Boolean(certificate?.template_data);
+    document.getElementById('certificate-confirmation').textContent = hasCertificate
+      ? 'Your certificate for ' + selectedRoleLabel + ' is ready to download.'
+      : 'Thank you for your feedback.';
+    document.getElementById('issued-certificate-preview').hidden = !hasCertificate;
+    document.getElementById('issued-certificate-actions').hidden = !hasCertificate;
+    certificateCustomArea.style.display = hasCertificate ? 'block' : 'none';
 
-    const now = new Date();
-    certDateDisplay.textContent = `Date: ${now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`;
-    const hash = Math.abs(hashCode(JSON.stringify([activeFormId, role, email, fullName]))).toString(36).toUpperCase().padStart(6, '0');
-    certIdDisplay.textContent = `INTL-${now.getFullYear()}-${hash}`;
-
-    // Check certificate mode (Custom vs Default)
-    const isCustom = certSettings.template_type === 'custom_pdf' || certSettings.template_type === 'custom_image';
-    if (isCustom && certSettings.template_data) {
-      certificatePrintArea.style.display = 'none';
-      certificateCustomArea.style.display = 'block';
-
-      updateTemplateBackground(certificateCustomArea, certSettings);
-
-      // Apply overlay styling
+    updateTemplateBackground(certificateCustomArea, certificate || {});
+    if (hasCertificate) {
       customCertNameDisplay.textContent = fullName;
-      customCertNameDisplay.style.top = `${certSettings.name_y_percent || 52}%`;
-      customCertNameDisplay.style.fontSize = `${certSettings.name_font_size || 32}px`;
-      customCertNameDisplay.style.color = certSettings.name_color || '#1e3a8a';
-      applyFontFamily(customCertNameDisplay, certSettings.name_font_family);
-      scalePdfPreviewName(certificateCustomArea, certSettings);
-
-    } else {
-      certificatePrintArea.style.display = 'flex';
-      certificateCustomArea.style.display = 'none';
+      customCertNameDisplay.style.top = certificate.name_y_percent + '%';
+      customCertNameDisplay.style.fontSize = certificate.name_font_size + 'px';
+      customCertNameDisplay.style.color = certificate.name_color;
+      applyFontFamily(customCertNameDisplay, certificate.name_font_family);
+      scalePdfPreviewName(certificateCustomArea, certificate);
     }
 
     viewParticipant.classList.remove('active');
@@ -946,7 +863,8 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
     pdfBtnLabel.textContent = 'Preparing PDF Engine...';
 
     const safeName = (activeParticipant.name || 'Participant').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const filename = `${roleLabels[activeParticipant.role]}_Certificate_${safeName}.pdf`;
+    const safeRole = activeParticipant.roleLabel.replace(/[^\p{L}\p{N}_-]+/gu, '_');
+    const filename = `${safeRole}_Certificate_${safeName}.pdf`;
 
     try {
       // Branch 1: If using Custom PDF template, modify it directly using pdf-lib!
@@ -998,15 +916,11 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
         downloadPdf(await pdfDoc.save(), filename);
 
       } else {
-        // Branch 2: Default vector or Custom Image template rendered via html2pdf
+        // Render an uploaded image template with its name overlay.
         await loadHtml2PdfEngine();
         pdfBtnLabel.textContent = 'Generating PDF...';
 
-        const certEl = certSettings.template_type === 'custom_image'
-          ? document.getElementById('certificate-custom-area')
-          : document.getElementById('certificate-print-area');
-
-        const exportCopy = certEl.cloneNode(true);
+        const exportCopy = certificateCustomArea.cloneNode(true);
         exportCopy.style.zoom = '1';
         exportCopy.style.margin = '0';
         exportCopy.style.width = '580px';
@@ -1448,7 +1362,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
         renderBuilderQuestions();
       }
 
-      applyFormAndCertSettings();
+      applyFormSettings();
       renderParticipantQuestions();
       await refreshPrograms();
       showToast('Form questions saved successfully');
@@ -1627,6 +1541,112 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   // ---------------------------------------------------------------------------
   let templateUploadVersion = 0;
 
+  const rolesList = document.getElementById('form-roles-list');
+  const addRoleForm = document.getElementById('add-form-role');
+  const newRoleName = document.getElementById('new-role-name');
+  const rolesStatus = document.getElementById('form-roles-status');
+
+  function roleLabel(id) {
+    return formRoles.find(role => role.role_id === id)?.label || id || '—';
+  }
+
+  function applyRoles(resetEditor = false) {
+    const activeRoles = formRoles.filter(role => role.is_active);
+    const selectedRole = inputPRole.value;
+    inputPRole.replaceChildren(new Option('Select your role', '', true, true),
+      ...activeRoles.map(role => new Option(role.label, role.role_id)));
+    inputPRole.options[0].disabled = true;
+    if (activeRoles.some(role => role.role_id === selectedRole)) inputPRole.value = selectedRole;
+    cardPRole.hidden = activeRoles.length === 0;
+    inputPRole.required = !cardPRole.hidden;
+
+    const previousEditorRole = adminCertificateRole;
+    certificateRoleSelect.replaceChildren(...activeRoles.map(role => new Option(role.label, role.role_id)));
+    adminCertificateRole = activeRoles.some(role => role.role_id === previousEditorRole)
+      ? previousEditorRole : activeRoles[0]?.role_id || '';
+    certificateRoleSelect.value = adminCertificateRole;
+    document.getElementById('certificate-role-picker').hidden = !adminCertificateRole;
+    if (resetEditor || previousEditorRole !== adminCertificateRole) loadCertificateEditor();
+    refreshCertificateEditor();
+
+    rolesList.replaceChildren(...activeRoles.map(role => {
+      const row = document.createElement('form');
+      row.className = 'form-role-row';
+      const name = document.createElement('input');
+      name.className = 'gf-input-card';
+      name.value = role.label;
+      name.maxLength = 100;
+      name.required = true;
+      name.setAttribute('aria-label', 'Role name for ' + role.label);
+      const save = document.createElement('button');
+      save.className = 'btn btn-secondary';
+      save.textContent = 'Save name';
+      save.setAttribute('aria-label', 'Save name for ' + role.label);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn btn-secondary';
+      remove.textContent = 'Remove';
+      remove.setAttribute('aria-label', 'Remove ' + role.label);
+      row.append(name, save, remove);
+      row.addEventListener('submit', event => {
+        event.preventDefault();
+        const label = name.value.trim();
+        if (label && label !== role.label) saveFormRole(role, { label });
+      });
+      remove.addEventListener('click', () => saveFormRole(role, { is_active: false }));
+      return row;
+    }));
+  }
+
+  addRoleForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const label = newRoleName.value.trim();
+    if (label) saveFormRole(null, { label });
+  });
+
+  async function saveFormRole(role, changes) {
+    if (!dataReady) return;
+    const formId = activeFormId;
+    const roles = formRoles;
+    const roleSection = addRoleForm.parentElement;
+    roleSection.inert = true;
+    rolesStatus.textContent = 'Saving role…';
+    try {
+      if (changes.label && roles.some(item => item.is_active && item !== role
+        && item.label.toLowerCase() === changes.label.toLowerCase())) {
+        throw new Error('A role with that name already exists.');
+      }
+      if (role) {
+        if (!isDemoMode) {
+          const { error } = await supabaseClient.from('form_roles').update(changes)
+            .eq('form_id', formId).eq('role_id', role.role_id).select('role_id').single();
+          if (error) throw error;
+        }
+        Object.assign(role, changes);
+      } else {
+        const newRole = { role_id: crypto.randomUUID(), label: changes.label, is_active: true };
+        if (!isDemoMode) {
+          const { error } = await supabaseClient.from('form_roles')
+            .insert({ form_id: formId, role_id: newRole.role_id, label: newRole.label });
+          if (error) throw error;
+        }
+        roles.push(newRole);
+      }
+
+      if (roles === formRoles) {
+        if (!role) newRoleName.value = '';
+        applyRoles();
+        renderAdminResponses();
+        rolesStatus.textContent = changes.is_active === false ? 'Role removed from the form.' : 'Role saved.';
+      }
+    } catch (error) {
+      if (roles === formRoles) rolesStatus.textContent = error.code === '23505'
+        ? 'A role with that name already exists.' : error.message;
+    } finally {
+      roleSection.inert = false;
+    }
+  }
+
   function loadCertificateEditor() {
     templateUploadVersion++;
     inputCertTemplateFile.value = '';
@@ -1634,52 +1654,19 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
     certSettings = { ...savedCertificates[adminCertificateRole] };
   }
 
-  function selectCertificateRole(role) {
-    if (role === adminCertificateRole) return;
-    adminCertificateRole = role;
-    certificateRoleSelect.value = role;
-    loadCertificateEditor();
-    applyCertificateEditorSettings();
-  }
-
   certificateRoleSelect.addEventListener('change', () => {
-    selectCertificateRole(certificateRoleSelect.value);
+    adminCertificateRole = certificateRoleSelect.value;
+    loadCertificateEditor();
+    refreshCertificateEditor();
   });
 
-  for (const button of document.querySelectorAll('[data-upload-role]')) {
-    button.addEventListener('click', () => {
-      selectCertificateRole(button.dataset.uploadRole);
-      btnModeCustom.click();
-      inputCertTemplateFile.click();
-    });
-  }
-
-  btnModeDefault.addEventListener('click', () => {
-    certSettings.template_type = 'default';
-    updateCertificateModeUI();
-  });
-
-  btnModeCustom.addEventListener('click', () => {
-    certSettings.template_type = certSettings.template_data && !/\.pdf$/i.test(certSettings.template_filename) ? 'custom_image' : 'custom_pdf';
-    updateCertificateModeUI();
-  });
-
-  function updateCertificateModeUI() {
-    document.getElementById('custom-template-title').textContent = roleLabels[adminCertificateRole] + ' certificate template';
-    btnSaveCustomTemplate.textContent = 'Save ' + adminCertificateRole + ' template';
-    const isCustom = certSettings.template_type === 'custom_pdf' || certSettings.template_type === 'custom_image';
-    if (isCustom) {
-      btnModeCustom.classList.add('active');
-      btnModeDefault.classList.remove('active');
-      sectionCustomTemplate.style.display = 'block';
-      formCertSettings.style.display = 'none';
-      updateLiveCustomPreview();
-    } else {
-      btnModeDefault.classList.add('active');
-      btnModeCustom.classList.remove('active');
-      sectionCustomTemplate.style.display = 'none';
-      formCertSettings.style.display = 'block';
-    }
+  function refreshCertificateEditor() {
+    sectionCustomTemplate.hidden = !adminCertificateRole;
+    const saved = savedCertificates[adminCertificateRole];
+    document.getElementById('certificate-role-help').textContent = !adminCertificateRole
+      ? 'Add a role in the Form Builder to assign a certificate template.'
+      : saved?.template_data ? 'Saved template: ' + saved.template_filename : 'No certificate template saved for this role.';
+    document.getElementById('custom-template-title').textContent = roleLabel(adminCertificateRole) + ' certificate template';
 
     // Update uploader badge
     if (certSettings.template_filename) {
@@ -1687,6 +1674,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
       certFileNameText.textContent = certSettings.template_filename;
     } else {
       certSelectedFilename.style.display = 'none';
+      certFileNameText.textContent = '';
     }
 
     // Update sliders
@@ -1698,6 +1686,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
 
     selectNameFont.value = certSettings.name_font_family || 'serif';
     inputNameColor.value = certSettings.name_color || '#1e3a8a';
+    updateLiveCustomPreview();
   }
 
   // Upload Dropzone Click
@@ -1773,8 +1762,8 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
     certSettings.template_data = '';
     certSettings.template_filename = '';
     inputCertTemplateFile.value = '';
-    updateCertificateModeUI();
-    showToast('Save to switch this role back to its built-in certificate.');
+    refreshCertificateEditor();
+    showToast('Save template to remove the certificate for this role.');
   });
 
   // Slider adjustments in real time
@@ -1853,72 +1842,51 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
     scalePdfPreviewName(adminCustomCertPreview, certSettings);
   }
 
-  async function saveCertificateSettings(updated) {
-    const certificates = savedCertificates;
-    const role = updated.event_role;
-    if (!isDemoMode) {
-      const { error } = await supabaseClient.from('certificate_settings').upsert(updated, { onConflict: 'id,event_role' });
-      if (error) throw error;
-    }
-    certificates[role] = { ...certificates[role], ...updated };
-    if (certificates === savedCertificates && role === adminCertificateRole) {
-      certSettings = { ...certSettings, ...updated };
-      applyCertificateEditorSettings();
-    }
-  }
-
-  // Save Custom Template Settings
   btnSaveCustomTemplate.addEventListener('click', async () => {
+    const role = adminCertificateRole;
+    if (!role) return;
+    const certificates = savedCertificates;
     const updated = {
       id: activeFormId,
-      event_role: adminCertificateRole,
-      template_type: certSettings.template_type === 'default' || !certSettings.template_data ? 'default' : certSettings.template_type,
-      template_data: certSettings.template_data || '',
-      template_filename: certSettings.template_filename || '',
-      name_y_percent: parseInt(sliderNameY.value, 10),
-      name_font_size: parseInt(sliderNameSize.value, 10),
+      event_role: role,
+      template_type: certSettings.template_type,
+      template_data: certSettings.template_data,
+      template_filename: certSettings.template_filename,
+      name_y_percent: Number(sliderNameY.value),
+      name_font_size: Number(sliderNameSize.value),
       name_color: inputNameColor.value,
       name_font_family: selectNameFont.value,
       updated_at: new Date().toISOString()
     };
-
+    if (!updated.template_data && !certificates[role]) {
+      showToast('Choose a template file to save a certificate.');
+      return;
+    }
     setButtonLoading(btnSaveCustomTemplate, true, 'Saving...');
     const certificateTab = document.getElementById('tab-certificate');
     certificateTab.inert = true;
 
     try {
-      await saveCertificateSettings(updated);
+      if (!isDemoMode) {
+        const table = supabaseClient.from('certificate_settings');
+        const { error } = updated.template_data
+          ? await table.upsert(updated, { onConflict: 'id,event_role' })
+          : await table.delete().eq('id', updated.id).eq('event_role', role);
+        if (error) throw error;
+      }
+      if (updated.template_data) certificates[role] = updated;
+      else delete certificates[role];
 
-      showToast(roleLabels[updated.event_role] + ' certificate settings saved');
+      if (certificates === savedCertificates && role === adminCertificateRole) {
+        loadCertificateEditor();
+        refreshCertificateEditor();
+        showToast(updated.template_data ? 'Certificate template saved.' : 'Certificate template removed.');
+      }
     } catch (err) {
       alert('Could not save template settings: ' + err.message);
     } finally {
       certificateTab.inert = false;
-      setButtonLoading(btnSaveCustomTemplate, false, 'Save ' + adminCertificateRole + ' template');
-    }
-  });
-
-  // Default Template Settings Form Save
-  formCertSettings.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const updated = {
-      id: activeFormId,
-      event_role: adminCertificateRole,
-      title: settingCertTitle.value.trim(),
-      issuer: settingCertIssuer.value.trim(),
-      body: settingCertBody.value.trim(),
-      signatory_name: settingCertSigName.value.trim(),
-      signatory_title: settingCertSigTitle.value.trim(),
-      template_type: 'default',
-      updated_at: new Date().toISOString()
-    };
-
-    try {
-      await saveCertificateSettings(updated);
-
-      showToast('Built-in certificate settings saved');
-    } catch (err) {
-      alert('Error updating certificate settings: ' + err.message);
+      setButtonLoading(btnSaveCustomTemplate, false, 'Save template');
     }
   });
 
@@ -1945,7 +1913,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div>
             <div style="font-weight:700; font-size:1rem;">${escapeHtml(r.full_name)}</div>
-            <div style="font-size:0.8rem; color:var(--text-muted);">${escapeHtml(r.email)} &bull; ${roleLabels[r.event_role] || roleLabels.participant} &bull; ${time}</div>
+            <div style="font-size:0.8rem; color:var(--text-muted);">${escapeHtml(r.email)} &bull; ${escapeHtml(roleLabel(r.event_role))} &bull; ${time}</div>
           </div>
           <span style="font-size:1.1rem; color:var(--text-muted);">&blacktriangledown;</span>
         </div>
@@ -1991,7 +1959,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
         new Date(r.created_at).toISOString(),
         r.full_name || '',
         r.email || '',
-        roleLabels[r.event_role] || roleLabels.participant
+        roleLabel(r.event_role)
       ];
       headersArray.forEach(qHeader => {
         const val = (r.answers && r.answers[qHeader] !== undefined) ? String(r.answers[qHeader]) : '';
@@ -2150,15 +2118,6 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
     if (!str) return '';
     const value = String(str);
     return (/^[\s]*[=+@-]/.test(value) ? "'" + value : value).replace(/"/g, '""');
-  }
-
-  function hashCode(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = ((hash << 5) - hash) + str.charCodeAt(i);
-      hash |= 0;
-    }
-    return hash;
   }
 
   // ---------------------------------------------------------------------------

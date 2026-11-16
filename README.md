@@ -1,10 +1,10 @@
 # PUP Unisan Internationalization Feedback & Certificates
 
-The Internationalization feedback form lets respondents select **Participant** or **Presenter**. After submitting, participants can download a **Certificate of Participation** and presenters can download a **Certificate of Recognition**.
+In **Admin Portal → Form Builder → Roles**, add, rename, or remove the roles for the selected program. When roles are configured, respondents choose one before submitting. Past responses retain their role when it is removed from the form, and the role appears in the response list and CSV export.
 
-In **Admin Portal → Certificate**, click **Upload participant template** or **Upload presenter template** and choose a PDF, SVG, PNG, or JPG. Adjust the recipient's name in the preview and click the save button for that role. Use **Certificate to edit** to change the built-in wording or revisit an uploaded template. The admin response list and CSV export include the submitted role. Respondents choose their own role.
+In **Admin Portal → Certificate**, select a role and upload a PDF, SVG, PNG, or JPG. Adjust the recipient’s name in the preview and click **Save template**. Respondents who choose that role can download a personalized certificate after submitting. A role without a saved template shows a submission confirmation.
 
-This is a separate copy of SSCForm. Use a dedicated Supabase project for live Internationalization responses. Configure the event details and authorized signatory in the admin portal before sharing the link. The demo uses temporary responses and sample certificate settings.
+On an existing Supabase project with multi-program support, run `migrations/20261115_custom_roles.sql` in **SQL Editor** before deploying the updated frontend. The migration keeps existing roles, responses, and uploaded templates. Roles that used the built-in design need a custom upload to issue certificates. For a new project, use `supabase-schema.sql`.
 
 ## 1. Create the Supabase database
 
@@ -58,7 +58,7 @@ Production builds fail when credentials are missing or a secret key is supplied.
 
 5. Deploy. Environment changes require a new deployment. Use a separate Supabase project for previews if you want to avoid preview submissions touching production.
 6. In Supabase **Authentication → URL Configuration**, set Site URL to your final HTTPS Vercel/custom domain. Add only your intended redirect URLs if you later enable recovery or email sign-in flows.
-7. Open `https://your-domain/?admin=1`, sign in, and configure the questions, event wording, certificate, and **actual authorized signatory**. The starter signatory is a placeholder. Use **Send** to copy the participant link.
+7. Open `https://your-domain/?admin=1`, sign in, and configure the questions, roles, and custom certificate templates. Use **Send** to copy the participant link.
 
 ## Before sharing with students
 
@@ -66,7 +66,7 @@ Production builds fail when credentials are missing or a secret key is supplied.
 - With repeat submissions disabled (the default), try the same email again; it must not create another response or issue a certificate for a different name.
 - Signed-out participants and signed-in accounts without the admin role must be unable to read responses or edit settings through the API.
 - Review the privacy notice with the program organizers, adding a real contact channel and retention period before collecting student information. Never ask for passwords or unnecessary sensitive data.
-- Set the correct certificate issuer and signatory. Certificates are generated in the browser; they are not cryptographically signed or independently verifiable.
+- Include the correct issuer and signatory in the uploaded artwork. Certificates are generated in the browser; they are not cryptographically signed or independently verifiable.
 
 ## Verification
 
@@ -100,9 +100,9 @@ Official references: [Supabase API keys](https://supabase.com/docs/guides/gettin
 
 ## Multiple program forms
 
-For an existing project with the repeat-submission migration installed, run `migrations/20261028_multiple_forms.sql` before deploying this frontend. Older projects must run `migrations/20261025_allow_duplicate_responses.sql` first. Do not apply the older migration again after the multi-form upgrade. Back up the live database first. New installations can use the complete `supabase-schema.sql`.
+For an existing project with the repeat-submission migration installed, run `migrations/20261028_multiple_forms.sql` before applying the custom roles migration. Older projects must run `migrations/20261025_allow_duplicate_responses.sql` first. Do not apply the older migration again after the multi-form upgrade. Back up the live database first. New installations can use the complete `supabase-schema.sql`.
 
-Open `?admin=1`, then use **Program forms → New program title → Create separate form**. The new program starts with fresh questions and a default certificate. Save its questions and certificate settings, and use **Send** to copy its separate `?form=ID` participant link. Responses and CSV exports apply to the selected program. Save changes before switching programs.
+Open `?admin=1`, then use **Program forms → New program title → Create separate form**. The new program starts with starter questions. Add its roles and any certificate templates, and use **Send** to copy its separate `?form=ID` participant link. Responses and CSV exports apply to the selected program. Save changes before switching programs.
 
 The existing program remains form 1, with its responses and certificate template preserved. Old participant links without a `form` parameter still load form 1. The same email can submit to different programs. All program admins can manage all programs. Demo programs and changes disappear on reload.
 

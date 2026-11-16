@@ -12,28 +12,32 @@ test('schema, participant privacy, admin authorization, validation and atomic sa
       grant execute on function auth.jwt() to anon, authenticated;`);
     const schema = await readFile('supabase-schema.sql', 'utf8');
     await db.exec(schema);
-    await db.exec("update public.certificate_settings set name_font_size=45;");
+    assert.deepEqual((await db.query('select * from certificate_settings')).rows, []);
+    await db.exec(`insert into form_roles(form_id,role_id,label) values (1,'guest-speaker','Guest Speaker');
+      insert into certificate_settings(id,event_role,template_type,template_data,name_font_size)
+        values (1,'guest-speaker','custom_pdf','data:application/pdf;base64,AAAA',45);`);
     await db.exec(schema);
     assert.equal((await db.query('select name_font_size from certificate_settings')).rows[0].name_font_size, 45);
     await db.exec('set role anon');
     const questions = (await db.query('select * from survey_questions order by sort_order')).rows;
     const answers = Object.fromEntries(questions.map(q => [q.question_text, q.question_type === 'rating' ? '5' : q.question_type === 'choice' ? q.options[0] : 'Thank you']));
-    const certificates = (await db.query('select event_role, title from certificate_settings order by event_role')).rows;
-    assert.deepEqual(certificates, [
-      { event_role: 'participant', title: 'Certificate of Participation' },
-      { event_role: 'presenter', title: 'Certificate of Recognition' }
-    ]);
+    await assert.rejects(db.query("insert into form_roles(form_id,label) values (1,'Blocked')"), /permission denied/);
+    await assert.rejects(db.query(
+      "insert into survey_responses(full_name,email,answers) values ('Student','student@example.com',$1)",
+      [JSON.stringify(answers)]
+    ), /Choose a role/);
     await assert.rejects(db.query(
       "insert into survey_responses(full_name,email,answers,event_role) values ('Student','student@example.com',$1,'invalid')",
       [JSON.stringify(answers)]
-    ), error => error.code === '23514');
-    await db.query('insert into survey_responses(full_name,email,answers) values ($1,$2,$3)', ['Student Name', 'STUDENT@example.com', JSON.stringify(answers)]);
+    ), error => error.code === '22023');
+    await db.query("insert into survey_responses(full_name,email,answers,event_role) values ($1,$2,$3,'guest-speaker')", ['Student Name', 'STUDENT@example.com', JSON.stringify(answers)]);
     await assert.rejects(db.query('select * from survey_responses'), /permission denied/);
     await assert.rejects(db.query("update form_settings set form_title='Hacked'"), /permission denied/);
     await assert.rejects(db.query('insert into survey_responses(full_name,email,answers) values ($1,$2,$3)', ['Other Student', 'student@example.com', JSON.stringify(answers)]), error => error.code === '23505');
     await assert.rejects(db.query("insert into survey_responses(full_name,email,answers) values ('Student','bad@example.com','{}')"), /required questions/);
     await db.exec('reset role; set role authenticated');
     assert.equal((await db.query('select * from survey_responses')).rows.length, 0);
+    assert.equal((await db.query("update form_roles set is_active=false returning role_id")).rows.length, 0);
     const rows = questions.map((q, index) => ({ ...q, sort_order: index + 1 }));
     await assert.rejects(db.query('select save_survey($1,$2,$3)', ['Blocked', '', JSON.stringify(rows)]), /Administrator access required/);
     await db.query("select set_config('request.jwt.claims', $1, false)", ['{"app_metadata":{"role":"admin"}}']);
@@ -51,13 +55,19 @@ test('schema, participant privacy, admin authorization, validation and atomic sa
     await db.query("select set_config('request.jwt.claims', '{}', false)");
     assert.equal((await db.query('update form_settings set allow_duplicate_responses=true returning id')).rows.length, 0);
     await db.query("select set_config('request.jwt.claims', $1, false)", ['{"app_metadata":{"role":"admin"}}']);
-    await db.exec('update form_settings set allow_duplicate_responses=true');
+    await db.exec(`update form_settings set allow_duplicate_responses=true;
+      update form_roles set label='Keynote Speaker' where role_id='guest-speaker';`);
     await db.exec('reset role; set role anon');
-    await db.query("insert into survey_responses(full_name,email,answers,event_role) values ($1,$2,$3,'presenter')", ['Repeat Student', ' STUDENT@example.com ', JSON.stringify(answers)]);
+    await db.query("insert into survey_responses(full_name,email,answers,event_role) values ($1,$2,$3,'guest-speaker')", ['Repeat Student', ' STUDENT@example.com ', JSON.stringify(answers)]);
     await db.exec('reset role');
     assert.equal((await db.query('select count(*)::int as total from survey_responses')).rows[0].total, 2);
-    assert.deepEqual((await db.query('select event_role from survey_responses order by created_at')).rows.map(row => row.event_role), ['participant', 'presenter']);
-    await db.exec('update form_settings set allow_duplicate_responses=false; set role anon');
+    assert.deepEqual((await db.query('select event_role from survey_responses order by created_at')).rows.map(row => row.event_role), ['guest-speaker', 'guest-speaker']);
+    assert.equal((await db.query("select label from form_roles where role_id='guest-speaker'")).rows[0].label, 'Keynote Speaker');
+    await db.exec("update form_settings set allow_duplicate_responses=false; update form_roles set is_active=false; set role anon");
+    await assert.rejects(db.query(
+      "insert into survey_responses(full_name,email,answers,event_role) values ('Archived','archived@example.com',$1,'guest-speaker')",
+      [JSON.stringify(answers)]
+    ), /no longer available/);
     await assert.rejects(db.query('insert into survey_responses(full_name,email,answers) values ($1,$2,$3)', ['Repeat Student', 'student@example.com', JSON.stringify(answers)]), error => error.code === '23505');
     // A rejected response must not consume an email's first valid submission.
     await assert.rejects(db.query("insert into survey_responses(full_name,email,answers) values ('Test','retry@example.com','{}')"), /required questions/);
@@ -93,7 +103,7 @@ test('migration upgrades an existing database without losing responses or duplic
     await db.exec(schema);
     assert.equal((await db.query('select allow_duplicate_responses from form_settings')).rows[0].allow_duplicate_responses, true);
     await db.exec('set role anon');
-    await db.query('insert into survey_responses(full_name,email,answers) values ($1,$2,$3)', ['Existing Student', 'existing@example.com', answers]);
+    await db.query("insert into survey_responses(full_name,email,answers,event_role) values ($1,$2,$3,'participant')", ['Existing Student', 'existing@example.com', answers]);
     await db.exec('reset role');
     assert.equal((await db.query('select count(*)::int as total from survey_responses')).rows[0].total, 2);
   } finally { await db.close(); }
@@ -114,7 +124,8 @@ test('separate programs preserve legacy data and isolate validation, email polic
     const oldAnswers = JSON.stringify(Object.fromEntries(oldQuestions.map(q => [q.question_text,
       q.question_type === 'rating' ? '5' : q.question_type === 'choice' ? q.options[0] : 'Thanks'])));
     await db.query("insert into survey_responses(full_name,email,answers) values ('Original Student','shared@example.com',$1)", [oldAnswers]);
-    await db.exec("update certificate_settings set title='Original certificate'");
+    await db.exec("insert into certificate_settings(id,title,template_type,template_data) values (1,'Original certificate','custom_image','data:image/png;base64,AAAA')");
+    await db.exec("alter table certificate_settings alter column template_type set default 'default'");
     const migration = await readFile('migrations/20261028_multiple_forms.sql', 'utf8');
     await db.exec(migration);
     await db.exec('set role anon');
@@ -143,10 +154,23 @@ test('separate programs preserve legacy data and isolate validation, email polic
     assert.equal((await db.query('select count(*)::int as n from survey_responses where form_id=$1', [id])).rows[0].n, 1);
     await db.exec('reset role');
     await db.exec(migration);
+    const roleMigration = await readFile('migrations/20261115_custom_roles.sql', 'utf8');
+    await db.exec(roleMigration);
+    await db.exec(roleMigration);
     await db.exec(schema);
-    assert.equal((await db.query('select count(*)::int as n from certificate_settings')).rows[0].n, 4);
-    assert.equal((await db.query('select count(*)::int as n from survey_responses')).rows[0].n, 2);
-    assert.equal((await db.query('select count(*)::int as n from response_email_registry')).rows[0].n, 2);
+    assert.deepEqual((await db.query('select id,event_role,title,template_type from certificate_settings')).rows,
+      [{ id: 1, event_role: 'participant', title: 'Original certificate', template_type: 'custom_image' }]);
+    const freshId = (await db.query("select create_survey('Fresh program') as id")).rows[0].id;
+    assert.deepEqual((await db.query('select * from form_roles where form_id=$1', [freshId])).rows, []);
+    await db.exec('set role anon');
+    await assert.rejects(db.query(
+      "insert into survey_responses(form_id,full_name,email,answers,event_role) values ($1,'Cross form','cross@example.com',$2,'participant')",
+      [freshId, answers]
+    ), /no longer available/);
+    await db.query("insert into survey_responses(form_id,full_name,email,answers) values ($1,'No role','norole@example.com',$2)", [freshId, answers]);
+    await db.exec('reset role');
+    assert.equal((await db.query('select count(*)::int as n from survey_responses')).rows[0].n, 3);
+    assert.equal((await db.query('select count(*)::int as n from response_email_registry')).rows[0].n, 3);
     await db.query("select set_config('request.jwt.claims', '{}', false)");
     await assert.rejects(db.query("select create_survey('No role')"), e => e.code === '42501');
   } finally { await db.close(); }

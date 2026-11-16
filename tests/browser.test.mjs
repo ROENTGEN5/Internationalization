@@ -47,7 +47,7 @@ test('production connects without exposing admin data and fails closed on databa
       requests.push(route.request().url());
       const url = route.request().url();
       const data = url.includes('form_settings') ? { id: 1, form_title: 'Live Internationalization Form', form_description: 'Test configuration' }
-        : url.includes('certificate_settings') ? ['participant', 'presenter'].map(event_role => ({ id: 1, event_role, title: 'Certificate', template_type: 'default' })) : [];
+        : [];
       return route.fulfill({ json: data });
     });
     await page.goto('http://127.0.0.1:3001');
@@ -99,22 +99,9 @@ test('mobile form, logo, validation, duplicate prevention, admin builder and PDF
     await page.locator('.gf-rating-scale').nth(1).locator('button').nth(4).click();
     await page.locator('#btn-submit-form').click();
     await page.locator('#view-certificate.active').waitFor();
-    assert.equal(await page.locator('#cert-recipient-name').textContent(), 'Juan Dela Cruz');
-    assert.equal(await page.locator('#cert-title-display').textContent(), 'Certificate of Participation');
-    assert.equal(await page.locator('#cert-issuer-display').textContent(), 'PUP Unisan Internationalization');
-    assert.match(await page.locator('#cert-id-display').textContent(), /^INTL-/);
-    assert.equal(await page.locator('#certificate-print-area .program-logos img').evaluateAll(images => images.length === 3 && images.every(img => img.complete && img.naturalWidth > 0)), true);
-    const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
-    await page.locator('#btn-download-pdf').click();
-    const download = await downloadPromise;
-    assert.equal(await download.failure(), null);
-    assert.match(download.suggestedFilename(), /^Participant_Certificate_/);
-    const pdf = await readFile(await download.path());
-    assert.equal(pdf.subarray(0, 4).toString(), '%PDF');
-    assert.equal((await PDFDocument.load(pdf)).getPageCount(), 1);
-    await assertCertificateFillsPage(pdf);
-    await page.evaluate(() => scrollTo(0, 0));
-    await page.screenshot({ path: 'test-results/mobile-certificate.png', fullPage: true });
+    assert.equal(await page.locator('#certificate-confirmation').textContent(), 'Thank you for your feedback.');
+    assert.equal(await page.locator('#btn-download-pdf').isVisible(), false);
+    assert.equal(await page.locator('#btn-print-cert').isVisible(), false);
     await page.locator('#btn-submit-another').click();
     await page.locator('#input-p-name').fill('Another Name');
     await page.locator('#input-p-email').fill('juan@example.com');
@@ -129,13 +116,7 @@ test('mobile form, logo, validation, duplicate prevention, admin builder and PDF
     await page.locator('#input-p-role').selectOption('presenter');
     await page.locator('#btn-submit-form').click();
     await page.locator('#view-certificate.active').waitFor();
-    assert.equal(await page.locator('#cert-title-display').textContent(), 'Certificate of Recognition');
-    assert.equal(await page.locator('#cert-role-label').textContent(), 'Presenter');
-    const presenterDownload = page.waitForEvent('download', { timeout: 60000 });
-    await page.locator('#btn-download-pdf').click();
-    const presenterPdf = await presenterDownload;
-    assert.match(presenterPdf.suggestedFilename(), /^Presenter_Certificate_/);
-    await assertCertificateFillsPage(await readFile(await presenterPdf.path()));
+    assert.equal(await page.locator('#btn-download-pdf').isVisible(), false);
     await page.locator('#btn-submit-another').click();
     await page.evaluate(() => scrollTo(0, 0));
     await page.screenshot({ path: 'test-results/mobile-form.png', fullPage: true });
@@ -145,13 +126,8 @@ test('mobile form, logo, validation, duplicate prevention, admin builder and PDF
     await page.locator('#btn-builder-save-all').click();
     await page.waitForFunction(() => document.getElementById('nav-form-title').textContent === 'Internationalization Event Evaluation');
     await page.locator('[data-tab="tab-certificate"]').click();
-    await page.locator('#certificate-role').selectOption('presenter');
-    await page.locator('#setting-cert-title').fill('Presenter Recognition');
-    await page.locator('#form-cert-settings button[type="submit"]').click();
     await page.locator('#certificate-role').selectOption('participant');
-    assert.equal(await page.locator('#setting-cert-title').inputValue(), 'Certificate of Participation');
-    const participantPicker = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Upload participant template' }).click();
+    assert.match(await page.locator('#certificate-role-help').textContent(), /No certificate template/);
     const template = await page.evaluate(() => {
       const canvas = document.createElement('canvas');
       canvas.width = 1160; canvas.height = 820;
@@ -162,13 +138,15 @@ test('mobile form, logo, validation, duplicate prevention, admin builder and PDF
       ctx.fillText('CERTIFICATE OF PARTICIPATION', 580, 180);
       return canvas.toDataURL('image/png').split(',')[1];
     });
-    await (await participantPicker).setFiles({
+    await page.locator('#input-cert-template-file').setInputFiles({
       name: 'certificate.png', mimeType: 'image/png', buffer: Buffer.from(template, 'base64')
     });
     await page.waitForFunction(() => document.getElementById('cert-file-name-text').textContent === 'certificate.png');
     await page.locator('#btn-save-custom-template').click();
-    assert.match(await page.locator('#participant-template-status').textContent(), /certificate\.png/);
-    assert.equal(await page.locator('#presenter-template-status').textContent(), 'Built-in certificate');
+    assert.match(await page.locator('#certificate-role-help').textContent(), /certificate\.png/);
+    await page.locator('#certificate-role').selectOption('presenter');
+    assert.match(await page.locator('#certificate-role-help').textContent(), /No certificate template/);
+    await page.locator('#certificate-role').selectOption('participant');
     await page.locator('#btn-toggle-preview').click();
     await page.locator('#input-p-name').fill('Maria Dela Cruz');
     await page.locator('#input-p-email').fill('maria@example.com');
@@ -290,21 +268,25 @@ test('mobile form, logo, validation, duplicate prevention, admin builder and PDF
     assert.equal(await page.locator('#admin-custom-cert-preview').getAttribute('data-preview-state'), 'ready');
     await page.locator('#admin-custom-cert-preview').screenshot({ path: 'test-results/admin-pdf-preview.png' });
 
-    const presenterTemplate = await PDFDocument.create();
-    presenterTemplate.addPage([720, 480]).drawText('PRESENTER TEMPLATE', { x: 180, y: 380 });
-    const presenterPicker = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Upload presenter template' }).click();
-    await (await presenterPicker).setFiles({
-      name: 'presenter.PDF', mimeType: 'application/pdf', buffer: Buffer.from(await presenterTemplate.save())
+    await page.locator('[data-tab="tab-builder"]').click();
+    await page.getByRole('textbox', { name: 'New role name' }).fill('Guest Speaker');
+    await page.getByRole('button', { name: 'Add role', exact: true }).click();
+    await page.locator('[data-tab="tab-certificate"]').click();
+    await page.locator('#certificate-role').selectOption({ label: 'Guest Speaker' });
+    const speakerTemplate = await PDFDocument.create();
+    speakerTemplate.addPage([720, 480]).drawText('SPEAKER TEMPLATE', { x: 180, y: 380 });
+    await page.locator('#input-cert-template-file').setInputFiles({
+      name: 'speaker.PDF', mimeType: 'application/pdf', buffer: Buffer.from(await speakerTemplate.save())
     });
     await page.waitForFunction(() => document.getElementById('admin-custom-cert-preview').dataset.previewState === 'ready');
-    await page.getByRole('button', { name: 'Save presenter template' }).click();
-    assert.match(await page.locator('#presenter-template-status').textContent(), /presenter\.PDF/);
-    assert.match(await page.locator('#participant-template-status').textContent(), /vector-certificate\.svg\.pdf/);
+    await page.getByRole('button', { name: 'Save template' }).click();
+    assert.match(await page.locator('#certificate-role-help').textContent(), /speaker\.PDF/);
+    await page.locator('#certificate-role').selectOption('participant');
+    assert.match(await page.locator('#certificate-role-help').textContent(), /vector-certificate\.svg\.pdf/);
     await page.locator('#btn-toggle-preview').click();
     await page.locator('#input-p-name').fill('Custom Presenter');
-    await page.locator('#input-p-email').fill('custom-presenter@example.com');
-    await page.locator('#input-p-role').selectOption('presenter');
+    await page.locator('#input-p-email').fill('speaker@example.com');
+    await page.locator('#input-p-role').selectOption({ label: 'Guest Speaker' });
     for (const scale of await page.locator('.gf-rating-scale').all()) await scale.locator('button').last().click();
     await page.locator('.gf-options-list').first().locator('.gf-option-row').first().click();
     await page.locator('#btn-submit-form').click();
@@ -312,7 +294,7 @@ test('mobile form, logo, validation, duplicate prevention, admin builder and PDF
     const customPresenterDownload = page.waitForEvent('download');
     await page.locator('#btn-download-pdf').click();
     const presenterFile = await customPresenterDownload;
-    assert.match(presenterFile.suggestedFilename(), /^Presenter_Certificate_/);
+    assert.match(presenterFile.suggestedFilename(), /^Guest_Speaker_Certificate_/);
     const customPresenterPdf = await PDFDocument.load(await readFile(await presenterFile.path()));
     assert.deepEqual(customPresenterPdf.getPage(0).getSize(), { width: 720, height: 480 });
     assert.deepEqual(errors, []);
@@ -373,31 +355,37 @@ test('admin creates and switches independent program forms with separate certifi
     await page.screenshot({ path: 'test-results/share-qr-mobile.png', fullPage: true });
     await page.locator('#btn-close-send-modal').click();
     await page.locator('[data-tab="tab-certificate"]').click();
-    await page.locator('#setting-cert-title').fill('October 29 Certificate');
-    await page.locator('#form-cert-settings button[type="submit"]').click();
+    assert.equal(await page.locator('#certificate-role-picker').isVisible(), false);
     await page.locator('[data-tab="tab-builder"]').click();
+    await page.getByRole('textbox', { name: 'New role name' }).fill('Volunteer');
+    await page.getByRole('button', { name: 'Add role', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Role name for Volunteer' }).fill('Event Volunteer');
+    await page.getByRole('button', { name: 'Save name for Volunteer' }).click();
+
     await page.locator('#program-select').selectOption('1');
     assert.equal(await page.locator('#builder-form-title').inputValue(), 'Internationalization Feedback');
     assert.equal(await page.locator('#responses-counter').textContent(), '1');
     assert.equal(await page.locator('#builder-questions-list .gf-card-builder').count(), 4);
-    assert.equal(await page.locator('#setting-cert-title').inputValue(), 'Certificate of Participation');
+    assert.equal(await page.getByRole('textbox', { name: 'Role name for Participant' }).count(), 1);
     await page.locator('#btn-open-send-modal').click();
     assert.equal(await decodeShareQr(), 'http://127.0.0.1:3002/?form=1');
     assert.equal(await page.locator('#btn-download-qr').getAttribute('download'), 'Internationalization_Form_1_QR.png');
     await page.locator('#btn-close-send-modal').click();
     await page.locator('#program-select').selectOption('2');
-    assert.equal(await page.locator('#setting-cert-title').inputValue(), 'October 29 Certificate');
+    assert.equal(await page.getByRole('textbox', { name: 'Role name for Event Volunteer' }).count(), 1);
+    assert.equal(await page.getByRole('textbox', { name: 'Role name for Participant' }).count(), 0);
     assert.equal(await page.locator('#responses-counter').textContent(), '0');
     await page.locator('#btn-toggle-preview').click();
     await page.locator('#input-p-name').fill('Alex Rivera');
     await page.locator('#input-p-email').fill('alex.rivera@example.com');
-    await page.locator('#input-p-role').selectOption('participant');
+    await page.locator('#input-p-role').selectOption({ label: 'Event Volunteer' });
     await page.locator('.gf-rating-scale button').last().click();
     await page.locator('#btn-submit-form').click();
     await page.locator('#view-certificate.active').waitFor();
-    assert.equal(await page.locator('#cert-recipient-name').textContent(), 'Alex Rivera');
-    assert.equal(await page.locator('#cert-title-display').textContent(), 'October 29 Certificate');
+    assert.equal(await page.locator('#btn-download-pdf').isVisible(), false);
     await page.locator('#link-footer-admin').click();
+    await page.getByRole('button', { name: 'Remove Event Volunteer' }).click();
+    assert.equal(await page.locator('#card-p-role').evaluate(card => card.hidden), true);
     await page.locator('[data-tab="tab-responses"]').click();
     const exported = page.waitForEvent('download');
     await page.locator('#btn-export-csv').click();
@@ -405,7 +393,7 @@ test('admin creates and switches independent program forms with separate certifi
     const csv = await readFile(await download.path(), 'utf8');
     assert.match(csv, /Alex Rivera/);
     assert.match(csv, /"Role"/);
-    assert.match(csv, /"Participant"/);
+    assert.match(csv, /"Event Volunteer"/);
     assert.doesNotMatch(csv, /international partners/);
     assert.match(download.suggestedFilename(), /Form_2/);
     assert.deepEqual(errors, []);

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="description" content="Internationalization program feedback and certificates for participants and presenters.">
+  <meta name="description" content="Internationalization program feedback and certificates with configurable roles.">
   <title>Internationalization | Feedback & Certificates</title>
   <link rel="icon" type="image/jpeg" href="assets/pup-seal.jpg">
   <meta name="theme-color" content="#800020">
@@ -78,7 +78,7 @@
           </div>
           <h1 id="public-form-title" class="gf-form-title">Internationalization Feedback</h1>
           <p id="public-form-desc" class="gf-form-desc">
-            Share your feedback about the Internationalization program. After submitting, you can download a certificate for your role.
+            Share your feedback about the Internationalization program.
           </p>
           <div class="gf-required-notice">* Indicates required question</div>
         </div>
@@ -91,7 +91,7 @@
           <div class="gf-question-card" id="card-p-name">
             <div class="gf-q-title-row">
               <label class="gf-q-title" for="input-p-name">
-                Full Name (for your Certificate) <span class="gf-required-star">*</span>
+                Full Name <span class="gf-required-star">*</span>
               </label>
             </div>
             <input 
@@ -130,17 +130,15 @@
             </div>
           </div>
 
-          <div class="gf-question-card" id="card-p-role">
+          <div class="gf-question-card" id="card-p-role" hidden>
             <div class="gf-q-title-row">
               <label class="gf-q-title" for="input-p-role">Your role <span class="gf-required-star">*</span></label>
             </div>
             <select id="input-p-role" class="gf-input-card" aria-describedby="role-help" required>
               <option value="" selected disabled>Select your role</option>
-              <option value="participant">Participant</option>
-              <option value="presenter">Presenter</option>
             </select>
-            <p class="gf-form-desc" id="role-help">Your role determines which certificate you receive.</p>
-            <div class="gf-error-text" id="role-error">Choose Participant or Presenter.</div>
+            <p class="gf-form-desc" id="role-help">Choose the role that applies to you.</p>
+            <div class="gf-error-text" id="role-error">Choose your role.</div>
           </div>
 
           <!-- Dynamic Questions Render Container -->
@@ -158,7 +156,7 @@
           <!-- Form Bottom Actions -->
           <div class="gf-form-actions">
             <button id="btn-submit-form" class="btn btn-primary" type="submit">
-              Submit &amp; Generate Certificate
+              Submit
             </button>
             <button id="btn-clear-form" class="btn-link" type="button">
               Clear form
@@ -178,56 +176,7 @@
           <p class="gf-form-desc" id="certificate-confirmation"></p>
         </div>
 
-        <!-- Certificate Card (Landscape A4 container) -->
-        <div class="cert-preview-container">
-          
-          <!-- Mode 1: Default Vector Gold/Navy Frame -->
-          <div id="certificate-print-area" class="certificate-frame">
-            <div class="cert-corner-accent tl"></div>
-            <div class="cert-corner-accent tr"></div>
-            <div class="cert-corner-accent bl"></div>
-            <div class="cert-corner-accent br"></div>
-            <div class="cert-inner-gold"></div>
-
-            <div>
-              <div class="program-logos certificate-logos">
-                <img class="program-seal" src="assets/pup-seal.jpg" width="960" height="959" alt="Polytechnic University of the Philippines seal">
-                <img class="program-wordmark" src="assets/gen-filipino-pedagogies.jpg" width="1248" height="832" alt="Global Educators Network Filipino Pedagogies SIG">
-                <img class="program-wordmark" src="assets/gen-tefl.jpg" width="962" height="530" alt="Global Educators Network TEFL">
-              </div>
-              <div class="cert-ribbon-text">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                </svg>
-                <span id="cert-role-label">Participant</span>
-              </div>
-              <h2 id="cert-title-display" class="cert-main-title">Certificate of Participation</h2>
-              <p id="cert-issuer-display" class="cert-issuer-text">PUP Unisan Internationalization</p>
-            </div>
-
-            <div>
-              <p style="font-size:0.75rem; font-style:italic; color:#64748b; margin-bottom:2px;">This certificate is proudly awarded to</p>
-              <div id="cert-recipient-name" class="cert-participant-name">Participant Name</div>
-            </div>
-
-            <p id="cert-body-display" class="cert-body-statement">
-              For active participation, completing the feedback survey, and contributing to the success of the sessions.
-            </p>
-
-            <div class="cert-sig-row">
-              <div>
-                <div id="cert-sig-script" class="cert-signature-draw">Authorized Signatory</div>
-                <div id="cert-sig-name-display" class="cert-sig-line">Authorized Signatory</div>
-                <div id="cert-sig-title-display" style="font-size:0.6rem; color:#64748b;">Internationalization Program</div>
-              </div>
-              <div style="text-align:right; font-size:0.6rem; color:#64748b;">
-                <div id="cert-date-display"></div>
-                <div>ID: <span id="cert-id-display"></span></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Mode 2: Custom Uploaded PDF/Image Template Frame -->
+        <div class="cert-preview-container" id="issued-certificate-preview" hidden>
           <div id="certificate-custom-area" class="certificate-custom-frame" style="display:none;">
             <div id="custom-cert-name-display" class="custom-cert-name-overlay">Participant Name</div>
           </div>
@@ -235,15 +184,17 @@
         </div>
 
         <div style="display:flex; flex-direction:column; gap:10px; margin-top:20px;">
-          <button id="btn-download-pdf" class="btn btn-primary" type="button">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-            </svg>
-            <span id="pdf-btn-label">Download Certificate (PDF)</span>
-          </button>
-          <button id="btn-print-cert" class="btn btn-secondary" type="button">
-            Print Certificate
-          </button>
+          <div id="issued-certificate-actions" hidden>
+            <button id="btn-download-pdf" class="btn btn-primary" type="button">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+              </svg>
+              <span id="pdf-btn-label">Download Certificate (PDF)</span>
+            </button>
+            <button id="btn-print-cert" class="btn btn-secondary" type="button">
+              Print Certificate
+            </button>
+          </div>
           <button id="btn-submit-another" class="btn-link" type="button">
             Submit another response
           </button>
@@ -341,7 +292,7 @@
                   class="gf-input-underline gf-textarea" 
                   style="font-size:0.95rem; min-height:60px;" 
                   placeholder="Form description"
-                >Share your feedback about the Internationalization program. After submitting, you can download a certificate for your role.</textarea>
+                >Share your feedback about the Internationalization program.</textarea>
               </div>
             </div>
 
@@ -351,9 +302,20 @@
                 <input type="checkbox" id="allow-duplicate-responses">
                 Allow multiple responses from the same email address
               </label>
-              <p class="gf-form-desc">Off: each email can submit once. On: repeat submissions are saved as separate responses and can generate certificates. Turning this off keeps all existing responses.</p>
+              <p class="gf-form-desc">Off: each email can submit once. On: repeat submissions are saved as separate responses. Turning this off keeps all existing responses.</p>
               <button type="button" id="btn-save-response-settings" class="btn btn-secondary">Save Response Settings</button>
               <p id="response-settings-status" role="status" style="margin-top:10px;"></p>
+            </section>
+
+            <section class="gf-question-card" aria-labelledby="form-roles-title">
+              <h3 id="form-roles-title" class="gf-q-title">Roles</h3>
+              <p class="gf-form-desc">The form asks respondents to choose a role when this list has options.</p>
+              <div id="form-roles-list"></div>
+              <form id="add-form-role" class="form-role-row">
+                <input id="new-role-name" class="gf-input-card" type="text" maxlength="100" placeholder="New role name" aria-label="New role name" required>
+                <button class="btn btn-secondary" type="submit">Add role</button>
+              </form>
+              <p id="form-roles-status" class="gf-form-desc" role="status"></p>
             </section>
 
             <!-- List of Editable Question Cards -->
@@ -397,38 +359,15 @@
             
             <div class="gf-question-card">
               <h2 class="gf-q-title">Certificate templates by role</h2>
-              <p class="gf-form-desc" id="certificate-role-help">Upload a separate template for each role. Respondents receive the template saved for the role they choose.</p>
-              <div class="certificate-role-cards">
-                <div class="certificate-role-card">
-                  <h3>Participant</h3>
-                  <p id="participant-template-status" class="gf-form-desc">Built-in certificate</p>
-                  <button type="button" class="btn btn-secondary" data-upload-role="participant">Upload participant template</button>
-                </div>
-                <div class="certificate-role-card">
-                  <h3>Presenter</h3>
-                  <p id="presenter-template-status" class="gf-form-desc">Built-in certificate</p>
-                  <button type="button" class="btn btn-secondary" data-upload-role="presenter">Upload presenter template</button>
-                </div>
-              </div>
-              <label class="gf-q-title" for="certificate-role">Certificate to edit</label>
-              <select id="certificate-role" class="gf-input-card" aria-describedby="certificate-role-help">
-                <option value="participant">Participant</option>
-                <option value="presenter">Presenter</option>
-              </select>
-              <h2 class="gf-q-title certificate-design-heading">Certificate Design Mode</h2>
-              <div class="cert-mode-selector">
-                <button type="button" id="btn-mode-default" class="cert-mode-btn active">
-                  <span>🏛️ Built-in Frame</span>
-                </button>
-                <button type="button" id="btn-mode-custom" class="cert-mode-btn">
-                  <span>📁 Upload Custom Template (PDF / SVG / Image)</span>
-                </button>
+              <p class="gf-form-desc" id="certificate-role-help"></p>
+              <div id="certificate-role-picker" hidden>
+                <label class="gf-q-title" for="certificate-role">Role</label>
+                <select id="certificate-role" class="gf-input-card" aria-describedby="certificate-role-help"></select>
               </div>
             </div>
 
-            <!-- CUSTOM UPLOAD SECTION (Shown when Custom Mode is selected) -->
-            <div id="section-custom-template" class="gf-question-card" style="display:none;">
-              <h3 id="custom-template-title" class="gf-q-title" style="margin-bottom:8px;">Participant certificate template</h3>
+            <div id="section-custom-template" class="gf-question-card" hidden>
+              <h3 id="custom-template-title" class="gf-q-title" style="margin-bottom:8px;">Certificate template</h3>
               <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:14px;">
                 Leave space for the recipient’s name. Use the preview to position it, then save the template.
               </p>
@@ -493,46 +432,11 @@
 
               <div style="margin-top:16px;">
                 <button type="button" id="btn-save-custom-template" class="btn btn-primary" style="width:100%;">
-                  Save participant template
+                  Save template
                 </button>
               </div>
 
             </div>
-
-            <!-- DEFAULT TEMPLATE SETTINGS SECTION (Shown when Default Mode is selected) -->
-            <form id="form-cert-settings" class="gf-question-card">
-              <h3 class="gf-q-title" style="margin-bottom:14px; font-size:1.15rem;">Built-in Template Text Settings</h3>
-
-              <div style="margin-bottom: 12px;">
-                <label class="gf-q-title" for="setting-cert-title">Certificate Title</label>
-                <input type="text" id="setting-cert-title" class="gf-input-card" required>
-              </div>
-
-              <div style="margin-bottom: 12px;">
-                <label class="gf-q-title" for="setting-cert-issuer">Issuing Organization</label>
-                <input type="text" id="setting-cert-issuer" class="gf-input-card" required>
-              </div>
-
-              <div style="margin-bottom: 12px;">
-                <label class="gf-q-title" for="setting-cert-body">Statement Body</label>
-                <textarea id="setting-cert-body" class="gf-input-card gf-textarea" rows="3" required></textarea>
-                <p style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Use <code>{name}</code> where the participant's name should appear.</p>
-              </div>
-
-              <div style="margin-bottom: 12px;">
-                <label class="gf-q-title" for="setting-cert-signame">Signatory Name</label>
-                <input type="text" id="setting-cert-signame" class="gf-input-card" required>
-              </div>
-
-              <div style="margin-bottom: 16px;">
-                <label class="gf-q-title" for="setting-cert-sigtitle">Signatory Title</label>
-                <input type="text" id="setting-cert-sigtitle" class="gf-input-card" required>
-              </div>
-
-              <button type="submit" id="btn-save-cert-settings" class="btn btn-primary" style="width:100%;">
-                Save Certificate Settings
-              </button>
-            </form>
 
             <div style="text-align:center; margin-top:20px;">
               <button id="btn-admin-signout" class="btn btn-secondary" style="max-width:200px; margin:0 auto;" type="button">
