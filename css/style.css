@@ -608,6 +608,31 @@ body {
   border-left-color: var(--primary);
 }
 
+.gf-question-drag {
+  display: flex;
+  width: 44px;
+  height: 36px;
+  margin: -12px auto 4px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.gf-question-drag:active { cursor: grabbing; }
+.gf-question-drag:focus-visible { outline: 2px solid var(--primary); }
+.gf-card-builder:only-child .gf-question-drag { display: none; }
+.gf-card-builder.is-dragging { opacity: 0.55; }
+.gf-card-builder[data-drop-edge="before"] { box-shadow: 0 -4px 0 var(--primary); }
+.gf-card-builder[data-drop-edge="after"] { box-shadow: 0 4px 0 var(--primary); }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .gf-builder-header-inputs {
   display: flex;
   flex-direction: column;

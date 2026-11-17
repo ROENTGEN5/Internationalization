@@ -1126,13 +1126,33 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   // ---------------------------------------------------------------------------
   // 9. Interactive Google Forms Builder
   // ---------------------------------------------------------------------------
-  function renderBuilderQuestions() {
-    builderQuestionsList.innerHTML = '';
+  const questionOrderHelp = document.getElementById('question-order-help');
+  const questionOrderStatus = document.getElementById('question-order-status');
+  let questionDrag = null;
 
-    currentQuestions.forEach((q, idx) => {
+  function renderBuilderQuestions() {
+    stopQuestionDrag();
+    builderQuestionsList.replaceChildren();
+    questionOrderHelp.hidden = currentQuestions.length < 2;
+    questionOrderStatus.textContent = '';
+
+    currentQuestions.forEach(q => {
       const card = document.createElement('div');
       card.className = 'gf-question-card gf-card-builder';
       card.dataset.id = q.id;
+
+      const dragHandle = document.createElement('button');
+      dragHandle.type = 'button';
+      dragHandle.className = 'icon-btn gf-question-drag';
+      dragHandle.setAttribute('aria-label', 'Reorder question');
+      dragHandle.setAttribute('aria-describedby', 'question-order-help');
+      dragHandle.title = 'Drag to reorder';
+      dragHandle.innerHTML = `
+        <svg width="20" height="16" viewBox="0 0 20 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M5 5h10M5 11h10"/>
+        </svg>
+      `;
+      card.appendChild(dragHandle);
 
       const qRow = document.createElement('div');
       qRow.className = 'gf-builder-q-row';
@@ -1197,13 +1217,15 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
       `;
 
       footer.querySelector('.btn-dup-q').addEventListener('click', () => {
+        currentQuestions = readBuilderQuestions();
+        const index = currentQuestions.findIndex(question => question.id === q.id);
+        const source = currentQuestions[index];
         const cloned = {
-          ...q,
+          ...source,
           id: 'q-' + Date.now(),
-          question_text: q.question_text + ' (Copy)',
-          sort_order: currentQuestions.length + 1
+          question_text: source.question_text + ' (Copy)'
         };
-        currentQuestions.splice(idx + 1, 0, cloned);
+        currentQuestions.splice(index + 1, 0, cloned);
         renderBuilderQuestions();
         renderParticipantQuestions();
         showToast('Question duplicated');
@@ -1211,7 +1233,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
 
       footer.querySelector('.btn-del-q').addEventListener('click', () => {
         if (confirm('Delete this question?')) {
-          currentQuestions.splice(idx, 1);
+          currentQuestions = readBuilderQuestions().filter(question => question.id !== q.id);
           renderBuilderQuestions();
           renderParticipantQuestions();
           showToast('Question removed');
@@ -1220,6 +1242,104 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
 
       card.appendChild(footer);
       builderQuestionsList.appendChild(card);
+    });
+  }
+
+  function moveQuestionCard(card, before) {
+    if (card === before || card.nextElementSibling === before) return;
+    const oldIndex = Array.from(builderQuestionsList.children).indexOf(card);
+    const [question] = currentQuestions.splice(oldIndex, 1);
+    builderQuestionsList.insertBefore(card, before);
+    const newIndex = Array.from(builderQuestionsList.children).indexOf(card);
+    currentQuestions.splice(newIndex, 0, question);
+    currentQuestions.forEach((item, index) => { item.sort_order = index + 1; });
+    questionOrderStatus.textContent = `Question moved to position ${newIndex + 1} of ${currentQuestions.length}.`;
+  }
+
+  builderQuestionsList.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && questionDrag) {
+      stopQuestionDrag();
+      return;
+    }
+    const handle = event.target.closest('.gf-question-drag');
+    if (!handle || questionDrag || btnBuilderSaveAll.disabled) return;
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    const card = handle.parentElement;
+    const sibling = event.key === 'ArrowUp' ? card.previousElementSibling : card.nextElementSibling;
+    if (!sibling) return;
+    moveQuestionCard(card, event.key === 'ArrowUp' ? sibling : sibling.nextElementSibling);
+    handle.focus({ preventScroll: true });
+    handle.scrollIntoView({ block: 'nearest' });
+  });
+
+  builderQuestionsList.addEventListener('pointerdown', event => {
+    const handle = event.target.closest('.gf-question-drag');
+    if (!handle || event.button !== 0 || questionDrag || btnBuilderSaveAll.disabled) return;
+    handle.setPointerCapture(event.pointerId);
+    questionDrag = {
+      handle, card: handle.parentElement, pointerId: event.pointerId,
+      startY: event.clientY, y: event.clientY, frame: null, target: null, before: null
+    };
+  });
+
+  builderQuestionsList.addEventListener('pointermove', event => {
+    const drag = questionDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    drag.y = event.clientY;
+    if (drag.frame !== null || Math.abs(drag.y - drag.startY) < 6) return;
+    drag.card.classList.add('is-dragging');
+    drag.frame = requestAnimationFrame(updateQuestionDrag);
+  });
+
+  function updateQuestionDropTarget(drag) {
+    const cards = Array.from(builderQuestionsList.children).filter(card => card !== drag.card);
+    const before = cards.find(card => {
+      const rect = card.getBoundingClientRect();
+      return drag.y < rect.top + rect.height / 2;
+    }) || null;
+    const target = before || cards.at(-1);
+    if (drag.target !== target || drag.before !== before) {
+      drag.target?.removeAttribute('data-drop-edge');
+      target.dataset.dropEdge = before ? 'before' : 'after';
+    }
+    drag.target = target;
+    drag.before = before;
+  }
+
+  function updateQuestionDrag() {
+    const drag = questionDrag;
+    if (drag.y < 80) window.scrollBy({ top: -16, behavior: 'instant' });
+    if (drag.y > window.innerHeight - 80) window.scrollBy({ top: 16, behavior: 'instant' });
+    updateQuestionDropTarget(drag);
+    drag.frame = requestAnimationFrame(updateQuestionDrag);
+  }
+
+  function stopQuestionDrag() {
+    if (!questionDrag) return;
+    const { handle, card, pointerId, frame, target } = questionDrag;
+    questionDrag = null;
+    if (frame !== null) cancelAnimationFrame(frame);
+    target?.removeAttribute('data-drop-edge');
+    card.classList.remove('is-dragging');
+    if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+  }
+
+  builderQuestionsList.addEventListener('pointerup', event => {
+    const drag = questionDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dropped = drag.frame !== null && !btnBuilderSaveAll.disabled;
+    if (dropped) {
+      drag.y = event.clientY;
+      updateQuestionDropTarget(drag);
+    }
+    stopQuestionDrag();
+    if (dropped) moveQuestionCard(drag.card, drag.before);
+  });
+
+  for (const eventName of ['pointercancel', 'lostpointercapture']) {
+    builderQuestionsList.addEventListener(eventName, event => {
+      if (questionDrag?.pointerId === event.pointerId) stopQuestionDrag();
     });
   }
 
@@ -1261,6 +1381,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   }
 
   btnBuilderAddQuestion.addEventListener('click', () => {
+    currentQuestions = readBuilderQuestions();
     const newQ = {
       id: 'q-' + Date.now(),
       question_text: 'Untitled Question',
@@ -1306,12 +1427,8 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
     }
   });
 
-  // Builder: Save All
-  btnBuilderSaveAll.addEventListener('click', async () => {
-    const cards = builderQuestionsList.querySelectorAll('.gf-card-builder');
-    const updatedQuestions = [];
-
-    cards.forEach((card, i) => {
+  function readBuilderQuestions() {
+    return Array.from(builderQuestionsList.children, (card, index) => {
       const qId = card.dataset.id;
       const prompt = card.querySelector('.q-builder-prompt').value.trim() || 'Untitled Question';
       const type = card.querySelector('.q-builder-type').value;
@@ -1327,17 +1444,21 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
         if (options.length === 0) options = ['Option 1'];
       }
 
-      updatedQuestions.push({
+      return {
         id: qId,
         question_text: prompt,
         question_type: type,
         options: options,
         is_required: isReq,
-        sort_order: i + 1
-      });
+        sort_order: index + 1
+      };
     });
+  }
 
-    currentQuestions = updatedQuestions;
+  // Builder: Save All
+  btnBuilderSaveAll.addEventListener('click', async () => {
+    stopQuestionDrag();
+    currentQuestions = readBuilderQuestions();
     formSettings.form_title = builderFormTitle.value.trim() || 'Internationalization Feedback';
     formSettings.form_description = builderFormDesc.value.trim() || '';
 

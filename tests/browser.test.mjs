@@ -312,7 +312,7 @@ test('admin creates and switches independent program forms with separate certifi
       server.on('exit', code => { clearTimeout(timeout); reject(new Error('Preview exited: ' + code)); });
     });
     browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     page.on('dialog', dialog => dialog.accept());
@@ -362,6 +362,40 @@ test('admin creates and switches independent program forms with separate certifi
     await page.getByRole('textbox', { name: 'Role name for Volunteer' }).fill('Event Volunteer');
     await page.getByRole('button', { name: 'Save name for Volunteer' }).click();
 
+    const cards = page.locator('#builder-questions-list .gf-card-builder');
+    const prompts = cards.locator('.q-builder-prompt');
+    const firstQuestion = await prompts.first().inputValue();
+    const editedQuestion = 'What should we improve next time?';
+    await prompts.last().fill(editedQuestion);
+    const handle = cards.last().getByRole('button', { name: 'Reorder question' });
+    async function dragCoordinates() {
+      await page.locator('#builder-questions-list').evaluate(list => list.scrollIntoView({ block: 'center' }));
+      await handle.click({ trial: true });
+      const handleBox = await handle.boundingBox();
+      const targetBox = await cards.first().boundingBox();
+      return {
+        x: Math.round(handleBox.x + handleBox.width / 2),
+        startY: Math.round(handleBox.y + handleBox.height / 2),
+        endY: Math.round(targetBox.y + targetBox.height / 3)
+      };
+    }
+    const { x, startY, endY } = await dragCoordinates();
+    await page.mouse.move(x, startY);
+    await page.mouse.down();
+    await page.mouse.move(x, endY, { steps: 6 });
+    await page.mouse.up();
+    assert.equal(await prompts.first().inputValue(), editedQuestion);
+    await cards.first().getByRole('button', { name: 'Reorder question' }).press('ArrowDown');
+    assert.equal(await prompts.first().inputValue(), firstQuestion);
+
+    const cdp = await page.context().newCDPSession(page);
+    const touch = await dragCoordinates();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touch.x, y: touch.startY }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touch.x, y: touch.endY }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    assert.equal(await prompts.first().inputValue(), editedQuestion);
+    await page.locator('#btn-builder-save-all').click();
+
     await page.locator('#program-select').selectOption('1');
     assert.equal(await page.locator('#builder-form-title').inputValue(), 'Internationalization Feedback');
     assert.equal(await page.locator('#responses-counter').textContent(), '1');
@@ -372,10 +406,12 @@ test('admin creates and switches independent program forms with separate certifi
     assert.equal(await page.locator('#btn-download-qr').getAttribute('download'), 'Internationalization_Form_1_QR.png');
     await page.locator('#btn-close-send-modal').click();
     await page.locator('#program-select').selectOption('2');
+    assert.equal(await prompts.first().inputValue(), editedQuestion);
     assert.equal(await page.getByRole('textbox', { name: 'Role name for Event Volunteer' }).count(), 1);
     assert.equal(await page.getByRole('textbox', { name: 'Role name for Participant' }).count(), 0);
     assert.equal(await page.locator('#responses-counter').textContent(), '0');
     await page.locator('#btn-toggle-preview').click();
+    assert.match(await page.locator('#participant-dynamic-questions .gf-q-title').first().textContent(), /What should we improve next time\?/);
     await page.locator('#input-p-name').fill('Alex Rivera');
     await page.locator('#input-p-email').fill('alex.rivera@example.com');
     await page.locator('#input-p-role').selectOption({ label: 'Event Volunteer' });
