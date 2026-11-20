@@ -124,7 +124,7 @@ test('mobile form, logo, validation, duplicate prevention, admin builder and PDF
     await page.locator('#admin-dashboard-box').waitFor({ state: 'visible' });
     await page.locator('#builder-form-title').fill('Internationalization Event Evaluation');
     await page.locator('#btn-builder-save-all').click();
-    await page.waitForFunction(() => document.getElementById('nav-form-title').textContent === 'Internationalization Event Evaluation');
+    await page.waitForFunction(() => document.getElementById('nav-form-title').textContent === '2026');
     await page.locator('[data-tab="tab-certificate"]').click();
     await page.locator('#certificate-role').selectOption('participant');
     assert.match(await page.locator('#certificate-role-help').textContent(), /No certificate template/);

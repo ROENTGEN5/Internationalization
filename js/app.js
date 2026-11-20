@@ -410,7 +410,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   }
 
   function applyFormSettings() {
-    navFormTitle.textContent = formSettings.form_title || 'Internationalization Feedback';
+    navFormTitle.textContent = '2026';
     publicFormTitle.textContent = formSettings.form_title || 'Internationalization Feedback';
     publicFormDesc.textContent = formSettings.form_description || '';
     builderFormTitle.value = formSettings.form_title || '';
