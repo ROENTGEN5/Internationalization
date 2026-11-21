@@ -29,6 +29,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
       id: 1,
       form_title: "Internationalization Feedback",
       form_description: "Share your feedback about the Internationalization program.",
+      banner_image: 'default',
       theme_color: "#7c3aed",
       allow_duplicate_responses: false
     },
@@ -151,7 +152,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
       if (isDemoMode) {
         id = Math.max(...demoForms.keys()) + 1;
         const store = structuredClone(demoDefaults);
-        store.formSettings = { ...store.formSettings, id, form_title: title, form_description: 'Please share your feedback about this program.' };
+        store.formSettings = { ...store.formSettings, id, form_title: title, form_description: 'Please share your feedback about this program.', banner_image: '' };
         store.roles = [];
         store.responses = [];
         store.questions = [
@@ -175,6 +176,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   // State
   let formSettings = { ...demoStore.formSettings };
   let currentQuestions = [];
+  let savedBuilderQuestions = '[]';
   let formRoles = [];
   let adminCertificateRole = '';
   let savedCertificates = demoStore.certificates;
@@ -206,6 +208,8 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   // Participant Form
   const publicFormTitle = document.getElementById('public-form-title');
   const publicFormDesc = document.getElementById('public-form-desc');
+  const publicDefaultBanner = document.getElementById('public-default-banner');
+  const publicCustomBanner = document.getElementById('public-custom-banner');
   const participantSurveyForm = document.getElementById('participant-survey-form');
   const inputPName = document.getElementById('input-p-name');
   const inputPEmail = document.getElementById('input-p-email');
@@ -237,6 +241,11 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   // Builder Elements
   const builderFormTitle = document.getElementById('builder-form-title');
   const builderFormDesc = document.getElementById('builder-form-desc');
+  const builderBannerFile = document.getElementById('builder-banner-file');
+  const builderBannerPreview = document.getElementById('builder-banner-preview');
+  const builderBannerStatus = document.getElementById('builder-banner-status');
+  const btnRemoveBanner = document.getElementById('btn-remove-banner');
+  let builderBanner = '';
   const builderQuestionsList = document.getElementById('builder-questions-list');
   const btnBuilderAddQuestion = document.getElementById('btn-builder-add-question');
   const btnBuilderSaveAll = document.getElementById('btn-builder-save-all');
@@ -370,6 +379,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
       applyFormSettings();
       renderParticipantQuestions();
       renderBuilderQuestions();
+      savedBuilderQuestions = JSON.stringify(readBuilderQuestions());
       renderAdminResponses();
       dataReady = true;
       btnSubmitForm.disabled = false;
@@ -397,6 +407,7 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
       applyFormSettings();
       renderParticipantQuestions();
       renderBuilderQuestions();
+      savedBuilderQuestions = JSON.stringify(readBuilderQuestions());
       renderAdminResponses();
       dataReady = true;
       btnSubmitForm.disabled = false;
@@ -415,8 +426,69 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
     publicFormDesc.textContent = formSettings.form_description || '';
     builderFormTitle.value = formSettings.form_title || '';
     builderFormDesc.value = formSettings.form_description || '';
+    builderBanner = formSettings.banner_image ?? 'default';
+    builderBannerStatus.textContent = '';
+    publicDefaultBanner.hidden = builderBanner !== 'default';
+    publicCustomBanner.hidden = !builderBanner || builderBanner === 'default';
+    if (publicCustomBanner.hidden) publicCustomBanner.removeAttribute('src');
+    else publicCustomBanner.src = builderBanner;
+    renderBuilderBanner();
     document.getElementById('allow-duplicate-responses').checked = formSettings.allow_duplicate_responses === true;
   }
+
+  function renderBuilderBanner() {
+    builderBannerPreview.replaceChildren();
+    btnRemoveBanner.hidden = !builderBanner;
+    if (!builderBanner) return;
+    const preview = builderBanner === 'default' ? publicDefaultBanner.cloneNode(true) : new Image();
+    if (builderBanner !== 'default') {
+      preview.src = builderBanner;
+      preview.alt = 'Form banner preview';
+      preview.className = 'form-banner';
+    }
+    preview.removeAttribute('id');
+    preview.hidden = false;
+    builderBannerPreview.append(preview);
+  }
+
+  builderBannerFile.addEventListener('change', async () => {
+    const file = builderBannerFile.files[0];
+    builderBannerFile.value = '';
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 1024 * 1024) {
+      builderBannerStatus.textContent = 'Choose a PNG, JPEG, or WebP image up to 1 MB.';
+      return;
+    }
+
+    const reader = new FileReader();
+    const settings = formSettings;
+    builderBannerStatus.textContent = 'Loading banner…';
+    builderBannerFile.disabled = btnRemoveBanner.disabled = btnBuilderSaveAll.disabled = true;
+    try {
+      const data = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const image = new Image();
+      image.src = data;
+      await image.decode();
+      if (formSettings !== settings) return;
+      builderBanner = data;
+      renderBuilderBanner();
+      builderBannerStatus.textContent = 'Banner ready to save.';
+    } catch {
+      if (formSettings === settings) builderBannerStatus.textContent = 'Could not read this image.';
+    } finally {
+      builderBannerFile.disabled = btnRemoveBanner.disabled = btnBuilderSaveAll.disabled = false;
+    }
+  });
+
+  btnRemoveBanner.addEventListener('click', () => {
+    builderBanner = '';
+    renderBuilderBanner();
+    builderBannerStatus.textContent = 'Banner removal ready to save.';
+  });
 
   // ---------------------------------------------------------------------------
   // 5. View 1: Participant Survey Rendering
@@ -1458,40 +1530,54 @@ import { MAX_TEMPLATE_BYTES, MAX_TEMPLATE_SIZE_LABEL } from './template-limits.j
   // Builder: Save All
   btnBuilderSaveAll.addEventListener('click', async () => {
     stopQuestionDrag();
-    currentQuestions = readBuilderQuestions();
-    formSettings.form_title = builderFormTitle.value.trim() || 'Internationalization Feedback';
-    formSettings.form_description = builderFormDesc.value.trim() || '';
+    const questions = readBuilderQuestions();
+    const questionsChanged = JSON.stringify(questions) !== savedBuilderQuestions;
+    const title = builderFormTitle.value.trim() || 'Internationalization Feedback';
+    const description = builderFormDesc.value;
+    const banner = builderBanner === (formSettings.banner_image ?? 'default') ? null : builderBanner;
+    let savedBanner = builderBanner;
 
+    builderBannerFile.disabled = btnRemoveBanner.disabled = builderFormTitle.disabled = builderFormDesc.disabled = true;
     setButtonLoading(btnBuilderSaveAll, true, 'Saving...');
 
     try {
+      let savedQuestions = questions;
       if (isDemoMode) {
-        demoStore.questions = [...currentQuestions];
-        demoStore.formSettings = { ...formSettings };
+        if (questionsChanged) demoStore.questions = questions;
       } else {
-        const rowsToSave = currentQuestions.map(q => ({ ...q,
-          id: /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(q.id) ? q.id : crypto.randomUUID()
-        }));
-        const { error } = await supabaseClient.rpc('save_survey', {
+        if (questionsChanged) {
+          savedQuestions = questions.map(q => ({ ...q,
+            id: /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(q.id) ? q.id : crypto.randomUUID()
+          }));
+        }
+        const { data, error } = await supabaseClient.rpc('save_survey_with_header', {
           p_form_id: activeFormId,
-          p_title: formSettings.form_title,
-          p_description: formSettings.form_description,
-          p_questions: rowsToSave
+          p_title: title,
+          p_description: description,
+          p_banner: banner,
+          p_questions: questionsChanged ? savedQuestions : null
         });
         if (error) throw error;
-        currentQuestions = rowsToSave;
-        renderBuilderQuestions();
+        savedBanner = data;
       }
 
+      formSettings = { ...formSettings, form_title: title, form_description: description, banner_image: savedBanner };
+      if (isDemoMode) demoStore.formSettings = { ...formSettings };
+      if (questionsChanged) {
+        currentQuestions = savedQuestions;
+        renderBuilderQuestions();
+        renderParticipantQuestions();
+        savedBuilderQuestions = JSON.stringify(readBuilderQuestions());
+      }
       applyFormSettings();
-      renderParticipantQuestions();
       await refreshPrograms();
-      showToast('Form questions saved successfully');
+      showToast('Form changes saved successfully');
 
     } catch (err) {
-      console.error('Error saving builder questions:', err);
-      alert('Could not save questions: ' + err.message);
+      console.error('Error saving form changes:', err);
+      alert('Could not save form changes: ' + err.message);
     } finally {
+      builderBannerFile.disabled = btnRemoveBanner.disabled = builderFormTitle.disabled = builderFormDesc.disabled = false;
       setButtonLoading(btnBuilderSaveAll, false, 'Save Changes');
     }
   });

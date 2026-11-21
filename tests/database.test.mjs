@@ -157,10 +157,30 @@ test('separate programs preserve legacy data and isolate validation, email polic
     const roleMigration = await readFile('migrations/20261115_custom_roles.sql', 'utf8');
     await db.exec(roleMigration);
     await db.exec(roleMigration);
+    const bannerMigration = await readFile('migrations/20261121_form_banners.sql', 'utf8');
+    await db.exec(bannerMigration);
+    const questionsBeforeHeaderEdit = (await db.query('select * from survey_questions where form_id=$1 order by sort_order', [id])).rows;
+    const banner = 'data:image/png;base64,AAAA';
+    const description = '  Program details\n\n\tFirst item';
+    const saveHeader = 'select save_survey_with_header($1,$2,$3,$4,$5)';
+    await db.exec('set role anon');
+    await assert.rejects(db.query(saveHeader, [id, 'Blocked', '', banner, null]), error => error.code === '42501');
+    await db.exec('reset role; set role authenticated');
+    await db.query(saveHeader, [id, 'Formatted title', description, banner, null]);
+    await assert.rejects(db.query(saveHeader, [id, 'Invalid banner', '', 'data:image/svg+xml;base64,AAAA', JSON.stringify(changed)]), error => error.code === '23514');
+    assert.deepEqual((await db.query('select * from survey_questions where form_id=$1 order by sort_order', [id])).rows, questionsBeforeHeaderEdit);
+    await db.exec('reset role');
+    await db.exec(bannerMigration);
     await db.exec(schema);
+    assert.deepEqual((await db.query('select form_title,form_description,banner_image from form_settings where id=$1', [id])).rows,
+      [{ form_title: 'Formatted title', form_description: description, banner_image: banner }]);
+    assert.equal((await db.query('select banner_image from form_settings where id=1')).rows[0].banner_image, 'default');
+    await db.query(saveHeader, [id, 'Formatted title', description, '', null]);
+    assert.equal((await db.query('select banner_image from form_settings where id=$1', [id])).rows[0].banner_image, '');
     assert.deepEqual((await db.query('select id,event_role,title,template_type from certificate_settings')).rows,
       [{ id: 1, event_role: 'participant', title: 'Original certificate', template_type: 'custom_image' }]);
     const freshId = (await db.query("select create_survey('Fresh program') as id")).rows[0].id;
+    assert.equal((await db.query('select banner_image from form_settings where id=$1', [freshId])).rows[0].banner_image, '');
     assert.deepEqual((await db.query('select * from form_roles where form_id=$1', [freshId])).rows, []);
     await db.exec('set role anon');
     await assert.rejects(db.query(

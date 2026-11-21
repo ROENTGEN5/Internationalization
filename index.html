@@ -71,14 +71,13 @@
         
         <!-- Header Card with Top Purple Stripe -->
         <div class="gf-header-card">
-          <div class="program-logos">
+          <div class="program-logos" id="public-default-banner">
             <img class="program-wordmark" src="assets/gen-filipino-pedagogies.jpg" width="1248" height="832" alt="Global Educators Network Filipino Pedagogies SIG">
             <img class="program-wordmark" src="assets/gen-tefl.jpg" width="962" height="530" alt="Global Educators Network TEFL">
           </div>
+          <img class="form-banner" id="public-custom-banner" alt="" hidden>
           <h1 id="public-form-title" class="gf-form-title">Internationalization Feedback</h1>
-          <p id="public-form-desc" class="gf-form-desc">
-            Share your feedback about the Internationalization program.
-          </p>
+          <p id="public-form-desc" class="gf-form-desc">Share your feedback about the Internationalization program.</p>
           <div class="gf-required-notice">* Indicates required question</div>
         </div>
 
@@ -278,6 +277,14 @@
             <!-- Editable Form Header Card -->
             <div class="gf-header-card">
               <div class="gf-builder-header-inputs">
+                <div id="builder-banner-preview"></div>
+                <div class="builder-banner-controls">
+                  <label for="builder-banner-file">Form banner</label>
+                  <input id="builder-banner-file" type="file" accept="image/png,image/jpeg,image/webp" aria-describedby="builder-banner-help">
+                  <small id="builder-banner-help">PNG, JPEG, or WebP up to 1 MB</small>
+                  <button id="btn-remove-banner" class="btn btn-secondary btn-sm" type="button" hidden>Remove banner</button>
+                  <span id="builder-banner-status" role="status"></span>
+                </div>
                 <input 
                   type="text" 
                   id="builder-form-title" 
@@ -285,12 +292,14 @@
                   style="font-size:1.4rem; font-weight:700;" 
                   value="Internationalization Feedback"
                   placeholder="Form title"
+                  aria-label="Form title"
                 >
                 <textarea 
                   id="builder-form-desc" 
                   class="gf-input-underline gf-textarea" 
                   style="font-size:0.95rem; min-height:60px;" 
                   placeholder="Form description"
+                  aria-label="Form description"
                 >Share your feedback about the Internationalization program.</textarea>
               </div>
             </div>

@@ -1,5 +1,7 @@
 # PUP Unisan Internationalization Feedback & Certificates
 
+In **Admin Portal → Form Builder**, upload or remove a form banner, edit the title and description, and click **Save Changes**. Existing programs keep their current banner until edited. New programs start with no banner. On an existing Supabase project, run `migrations/20261121_form_banners.sql` after the custom roles migration and before deploying the updated frontend.
+
 In **Admin Portal → Form Builder → Roles**, add, rename, or remove the roles for the selected program. When roles are configured, respondents choose one before submitting. Past responses retain their role when it is removed from the form, and the role appears in the response list and CSV export.
 
 In **Admin Portal → Certificate**, select a role and upload a PDF, SVG, PNG, or JPG. Adjust the recipient’s name in the preview and click **Save template**. Respondents who choose that role can download a personalized certificate after submitting. A role without a saved template shows a submission confirmation.
